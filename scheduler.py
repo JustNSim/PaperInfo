@@ -37,6 +37,32 @@ def _get_fetch_date_range():
     from_date = None
     to_date = datetime.utcnow()
 
+    # 检查论文表是否为空
+    paper_count = Paper.query.count()
+    if paper_count == 0:
+        logger.info("论文表为空，使用默认时间范围获取历史数据")
+        from_date = to_date - timedelta(days=Config.FETCH_DAYS_BACK)
+        return from_date, to_date
+
+    # 检查最近是否有清空操作
+    try:
+        last_cleared = UpdateLog.query.filter_by(
+            trigger_type='data_cleared'
+        ).order_by(UpdateLog.trigger_time.desc()).first()
+        if last_cleared:
+            # 检查清空后是否有新的成功更新
+            last_successful = UpdateLog.query.filter(
+                UpdateLog.trigger_type.in_(['scheduled', 'manual']),
+                UpdateLog.status == 'success',
+                UpdateLog.trigger_time > last_cleared.trigger_time
+            ).first()
+            if not last_successful:
+                logger.info(f"检测到数据清空操作（{last_cleared.trigger_time.strftime('%Y-%m-%d %H:%M')}），使用默认时间范围")
+                from_date = to_date - timedelta(days=Config.FETCH_DAYS_BACK)
+                return from_date, to_date
+    except Exception as e:
+        logger.warning(f"检查清空记录失败: {e}")
+
     if Config.INCREMENTAL_UPDATE:
         # 尝试获取上次更新时间
         try:

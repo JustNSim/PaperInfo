@@ -15,7 +15,12 @@
                 <div class="card-header bg-white">
                     <div class="d-flex justify-content-between align-items-center">
                         <h6 class="mb-0">历史更新记录</h6>
-                        <span class="badge bg-primary">共 {{ total }} 条记录</span>
+                        <div>
+                            <span class="badge bg-primary me-2">共 {{ total }} 条记录</span>
+                            <button class="btn btn-sm btn-success" onclick="triggerFetch()">
+                                <i class="bi bi-cloud-download"></i> 立即更新
+                            </button>
+                        </div>
                     </div>
                 </div>
                 <div class="card-body p-0">
@@ -27,17 +32,15 @@
                                     <th>触发时间</th>
                                     <th>触发类型</th>
                                     <th>状态</th>
-                                    <th>新增论文</th>
+                                    <th>操作详情</th>
                                     <th>来源分布</th>
                                     <th>处理的领域</th>
-                                    {% if logs[0].error_message %}
-                                    <th>错误信息</th>
-                                    {% endif %}
+                                    <th>操作</th>
                                 </tr>
                             </thead>
                             <tbody>
                                 {% for log in logs %}
-                                <tr class="{% if log.status == 'failed' %}table-danger{% elif log.status == 'partial' %}table-warning{% endif %}">
+                                <tr class="{% if log.status == 'failed' %}table-danger{% elif log.trigger_type == 'data_cleared' %}table-warning{% endif %}">
                                     <td>
                                         <small>{{ log.trigger_time.strftime('%Y-%m-%d %H:%M:%S') }}</small>
                                     </td>
@@ -46,29 +49,47 @@
                                         <span class="badge bg-info">
                                             <i class="bi bi-clock"></i> 定时
                                         </span>
-                                        {% else %}
+                                        {% elif log.trigger_type == 'manual' %}
                                         <span class="badge bg-success">
                                             <i class="bi bi-hand-index"></i> 手动
+                                        </span>
+                                        {% elif log.trigger_type == 'data_cleared' %}
+                                        <span class="badge bg-warning">
+                                            <i class="bi bi-trash3"></i> 清空
                                         </span>
                                         {% endif %}
                                     </td>
                                     <td>
-                                        {% if log.status == 'success' %}
+                                        {% if log.trigger_type == 'data_cleared' %}
+                                        <span class="badge bg-warning text-dark">已清空</span>
+                                        {% elif log.status == 'success' %}
                                         <span class="badge bg-success">成功</span>
                                         {% elif log.status == 'failed' %}
                                         <span class="badge bg-danger">失败</span>
                                         {% elif log.status == 'partial' %}
-                                        <span class="badge bg-warning">部分成功</span>
+                                        <span class="badge bg-info">部分成功</span>
                                         {% endif %}
                                     </td>
                                     <td>
-                                        <strong class="text-primary">{{ log.total_new }}</strong> 篇
+                                        {% if log.trigger_type == 'data_cleared' %}
+                                        <small class="text-warning">
+                                            <i class="bi bi-exclamation-triangle"></i>
+                                            清空了 {{ log.source_stats.cleared_papers }} 篇论文
+                                            {% if log.source_stats.cleared_domains %}和 {{ log.source_stats.cleared_domains }} 个领域{% endif %}
+                                        </small>
+                                        {% else %}
+                                        <strong class="text-primary">{{ log.total_new }}</strong> 篇新增
+                                        {% endif %}
                                     </td>
                                     <td>
                                         <small>
-                                            {% if log.source_stats %}
+                                            {% if log.trigger_type == 'data_cleared' %}
+                                            <span class="text-muted">-</span>
+                                            {% elif log.source_stats %}
                                             {% for source, count in log.source_stats.items() %}
+                                            {% if source not in ['cleared_papers', 'cleared_domains'] %}
                                             <span class="badge bg-secondary me-1">{{ source }}: {{ count }}</span>
+                                            {% endif %}
                                             {% endfor %}
                                             {% else %}
                                             <span class="text-muted">无数据</span>
@@ -77,7 +98,9 @@
                                     </td>
                                     <td>
                                         <small>
-                                            {% if log.domains_processed %}
+                                            {% if log.trigger_type == 'data_cleared' %}
+                                            <span class="text-muted">-</span>
+                                            {% elif log.domains_processed %}
                                             {% for domain_id in log.domains_processed %}
                                             <span class="badge bg-light text-dark me-1">{{ domain_names.get(domain_id, domain_id) }}</span>
                                             {% endfor %}
@@ -86,13 +109,13 @@
                                             {% endif %}
                                         </small>
                                     </td>
-                                    {% if log.error_message %}
                                     <td>
-                                        <small class="text-danger" title="{{ log.error_message }}">
-                                            {{ log.error_message[:50] }}{% if log.error_message|length > 50 %}...{% endif %}
-                                        </small>
+                                        {% if log.trigger_type == 'data_cleared' %}
+                                        <button class="btn btn-sm btn-outline-primary" onclick="triggerFetch()">
+                                            <i class="bi bi-arrow-clockwise"></i> 恢复
+                                        </button>
+                                        {% endif %}
                                     </td>
-                                    {% endif %}
                                 </tr>
                                 {% endfor %}
                             </tbody>
@@ -150,7 +173,7 @@
                 <div class="col-md-3">
                     <div class="card text-center">
                         <div class="card-body">
-                            <h6 class="card-subtitle mb-2 text-muted">总更新次数</h6>
+                            <h6 class="card-subtitle mb-2 text-muted">总操作次数</h6>
                             <h3 class="card-title text-primary">{{ total }} 次</h3>
                         </div>
                     </div>
@@ -158,24 +181,31 @@
                 <div class="col-md-3">
                     <div class="card text-center">
                         <div class="card-body">
-                            <h6 class="card-subtitle mb-2 text-muted">成功</h6>
-                            <h3 class="card-title text-success">{{ logs|selectattr('status', 'equalto', 'success')|list|length }} 次</h3>
+                            <h6 class="card-subtitle mb-2 text-muted">抓取成功</h6>
+                            <h3 class="card-title text-success">{{ logs|selectattr('trigger_type', 'in', ['scheduled', 'manual'])|selectattr('status', 'equalto', 'success')|list|length }} 次</h3>
                         </div>
                     </div>
                 </div>
                 <div class="col-md-3">
                     <div class="card text-center">
                         <div class="card-body">
-                            <h6 class="card-subtitle mb-2 text-muted">失败</h6>
-                            <h3 class="card-title text-danger">{{ logs|selectattr('status', 'equalto', 'failed')|list|length }} 次</h3>
+                            <h6 class="card-subtitle mb-2 text-muted">数据清空</h6>
+                            <h3 class="card-title text-warning">{{ logs|selectattr('trigger_type', 'equalto', 'data_cleared')|list|length }} 次</h3>
                         </div>
                     </div>
                 </div>
                 <div class="col-md-3">
                     <div class="card text-center">
                         <div class="card-body">
-                            <h6 class="card-subtitle mb-2 text-muted">最近更新</h6>
-                            <p class="card-text small text-muted">{{ logs[0].trigger_time.strftime('%Y-%m-%d %H:%M') }}</p>
+                            <h6 class="card-subtitle mb-2 text-muted">最近操作</h6>
+                            <p class="card-text small text-muted">
+                                {% if logs[0].trigger_type == 'data_cleared' %}
+                                <span class="text-warning">清空数据</span>
+                                {% else %}
+                                抓取成功
+                                {% endif %}
+                                <br>{{ logs[0].trigger_time.strftime('%Y-%m-%d %H:%M') }}
+                            </p>
                         </div>
                     </div>
                 </div>
@@ -188,15 +218,87 @@
 
 {% block scripts %}
 <script>
+// 触发抓取
+function triggerFetch() {
+    if (!confirm('确定要立即更新论文数据吗？')) {
+        return;
+    }
+
+    // 显示进度提示
+    showToast('正在抓取论文数据，请稍候...', 'info');
+
+    // 发送请求
+    fetch('/api/trigger', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({})
+    })
+    .then(res => res.json())
+    .then(data => {
+        if (data.success) {
+            showToast(data.message, 'success');
+            // 3秒后刷新页面查看结果
+            setTimeout(() => {
+                window.location.href = '/update-logs?refresh=true';
+            }, 3000);
+        } else {
+            showToast('抓取失败: ' + data.message, 'error');
+        }
+    })
+    .catch(err => {
+        showToast('请求失败: ' + err, 'error');
+    });
+}
+
+// Toast 提示
+function showToast(message, type = 'info') {
+    // 创建 toast 容器（如果不存在）
+    let toastContainer = document.getElementById('toast-container');
+    if (!toastContainer) {
+        toastContainer = document.createElement('div');
+        toastContainer.id = 'toast-container';
+        toastContainer.className = 'position-fixed top-0 end-0 p-3';
+        document.body.appendChild(toastContainer);
+    }
+
+    const bgClass = {
+        'success': 'bg-success',
+        'error': 'bg-danger',
+        'warning': 'bg-warning',
+        'info': 'bg-info'
+    }[type] || 'bg-info';
+
+    const toastHtml = `
+        <div class="toast align-items-center text-white ${bgClass} border-0" role="alert">
+            <div class="d-flex">
+                <div class="toast-body">${message}</div>
+                <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
+            </div>
+        </div>
+    `;
+
+    const tempDiv = document.createElement('div');
+    tempDiv.innerHTML = toastHtml;
+    const toastElement = tempDiv.firstElementChild;
+    toastContainer.appendChild(toastElement);
+
+    const bsToast = new bootstrap.Toast(toastElement, { delay: 5000 });
+    bsToast.show();
+
+    toastElement.addEventListener('hidden.bs.toast', () => {
+        toastElement.remove();
+    });
+}
+
 // 自动刷新：如果是手动触发的更新，可以定时刷新页面查看最新状态
-// 注意：实际使用时可以根据需要调整
 $(document).ready(function() {
     // 检查 URL 参数，如果包含 refresh=true，则 5 秒后自动刷新
     const urlParams = new URLSearchParams(window.location.search);
     if (urlParams.get('refresh') === 'true') {
+        showToast('数据更新完成，页面即将刷新...', 'info');
         setTimeout(function() {
             window.location.href = window.location.pathname;
-        }, 5000);
+        }, 3000);
     }
 });
 </script>

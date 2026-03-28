@@ -302,6 +302,19 @@ def register_routes(app):
 
             db.session.commit()
 
+            # 记录清空操作到更新日志
+            log = UpdateLog(
+                trigger_type='data_cleared',
+                total_new=0,
+                arxiv_new=0,
+                dblp_new=0,
+                source_stats={'cleared_papers': paper_count, 'cleared_domains': domain_count},
+                domains_processed=[],
+                status='success'
+            )
+            db.session.add(log)
+            db.session.commit()
+
             result = {
                 'success': True,
                 'message': f'已清空 {paper_count} 篇论文' + (f'和 {domain_count} 个领域' if clear_domains else ''),
