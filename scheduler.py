@@ -87,9 +87,17 @@ def fetch_papers_for_domain(domain: Domain) -> int:
     return new_count
 
 
+# 批量提交大小：每处理 BATCH_SIZE 篇论文提交一次
+BATCH_SIZE = 20
+
+
 def _save_papers(papers: list, domain: Domain) -> int:
     """
-    保存论文到数据库（去重）
+    保存论文到数据库（去重，批量提交）
+
+    使用批量提交模式提高容错性：
+    - 每 BATCH_SIZE 篇论文提交一次
+    - 如果某批提交失败，只影响该批，不影响已提交的批次
 
     Args:
         papers: 论文列表
@@ -99,6 +107,8 @@ def _save_papers(papers: list, domain: Domain) -> int:
         新增论文数量
     """
     new_count = 0
+    batch = []  # 当前批次的论文
+    committed_count = 0  # 已提交的论文数
 
     for paper_data in papers:
         try:
@@ -112,7 +122,7 @@ def _save_papers(papers: list, domain: Domain) -> int:
                 logger.debug(f"论文已存在，跳过: {paper_data['title'][:50]}")
                 continue
 
-            # 创建新论文
+            # 创建新论文对象
             paper = Paper(
                 title=paper_data['title'],
                 authors=paper_data.get('authors', []),
@@ -127,21 +137,54 @@ def _save_papers(papers: list, domain: Domain) -> int:
                 domain_id=domain.id
             )
 
-            db.session.add(paper)
+            batch.append(paper)
             new_count += 1
-            logger.debug(f"新增论文: {paper_data['title'][:50]}")
+            logger.debug(f"准备新增论文: {paper_data['title'][:50]}")
+
+            # 达到批次大小时提交
+            if len(batch) >= BATCH_SIZE:
+                committed = _commit_batch(batch)
+                committed_count += committed
+                batch = []  # 清空批次
 
         except Exception as e:
-            logger.warning(f"保存论文失败: {e}")
+            logger.warning(f"处理论文失败: {e}")
             continue
 
+    # 提交剩余的论文
+    if batch:
+        committed = _commit_batch(batch)
+        committed_count += committed
+
+    logger.info(f"共尝试新增 {new_count} 篇论文，成功提交 {committed_count} 篇")
+    return committed_count
+
+
+def _commit_batch(batch: list) -> int:
+    """
+    提交一批论文到数据库
+
+    Args:
+        batch: 论文对象列表
+
+    Returns:
+        成功提交的论文数量
+    """
+    if not batch:
+        return 0
+
     try:
+        for paper in batch:
+            db.session.add(paper)
+
         db.session.commit()
+        logger.info(f"成功提交批次: {len(batch)} 篇论文")
+        return len(batch)
+
     except Exception as e:
         db.session.rollback()
-        logger.error(f"提交数据库失败: {e}")
-
-    return new_count
+        logger.error(f"批次提交失败 ({len(batch)} 篇论文丢失): {e}")
+        return 0
 
 
 def scheduled_fetch_job():
