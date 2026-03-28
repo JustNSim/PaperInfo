@@ -409,6 +409,7 @@ def register_routes(app):
         - 每评估完一篇论文立即保存，防止中断丢失结果
         - 使用并行评估提升速度
         - 实时推送进度更新
+        - 记录完整的统计信息和分数变化详情
         """
         domain = Domain.query.get_or_404(domain_id)
 
@@ -443,6 +444,10 @@ def register_routes(app):
                 total = len(papers)
                 success_count = 0
                 failed_count = 0
+                filtered_count = 0
+
+                # 记录分数变化详情
+                score_changes = []
 
                 # 发送开始事件
                 data = f"data: {json.dumps({'type': 'start', 'total': total})}\n\n"
@@ -458,6 +463,10 @@ def register_routes(app):
                 def evaluate_and_save(paper, index):
                     """评估单篇论文并立即保存"""
                     try:
+                        # 记录原分数
+                        old_relevance = paper.llm_score
+                        old_value = paper.llm_value_score
+
                         result = _evaluate_single_paper({
                             'title': paper.title,
                             'abstract': paper.abstract or ''
@@ -471,13 +480,25 @@ def register_routes(app):
                             # 立即提交这一篇的更改
                             db.session.commit()
 
+                            # 记录分数变化
+                            score_changes.append({
+                                'paper_id': paper.id,
+                                'title': paper.title,
+                                'old_relevance': old_relevance,
+                                'old_value': old_value,
+                                'new_relevance': result.get('llm_score'),
+                                'new_value': result.get('llm_value_score')
+                            })
+
                             result_queue.put({
                                 'index': index,
                                 'success': True,
                                 'paper_id': paper.id,
                                 'title': paper.title[:50],
                                 'relevance': result.get('llm_score'),
-                                'value': result.get('llm_value_score')
+                                'value': result.get('llm_value_score'),
+                                'old_relevance': old_relevance,
+                                'old_value': old_value
                             })
                         elif result.get('error'):
                             result_queue.put({
@@ -489,12 +510,27 @@ def register_routes(app):
                             })
                         else:
                             # 被过滤的论文
+                            filtered_count += 1
+
+                            # 记录被过滤论文的分数
+                            score_changes.append({
+                                'paper_id': paper.id,
+                                'title': paper.title,
+                                'old_relevance': old_relevance,
+                                'old_value': old_value,
+                                'new_relevance': result.get('llm_score'),
+                                'new_value': result.get('llm_value_score'),
+                                'filtered': True
+                            })
+
                             result_queue.put({
                                 'index': index,
                                 'success': True,
                                 'filtered': True,
                                 'paper_id': paper.id,
-                                'title': paper.title[:50]
+                                'title': paper.title[:50],
+                                'relevance': result.get('llm_score'),
+                                'value': result.get('llm_value_score')
                             })
                     except Exception as e:
                         result_queue.put({
@@ -525,7 +561,6 @@ def register_routes(app):
                             total_completed += 1
 
                             if result.get('filtered'):
-                                # 被过滤的论文
                                 data = f"data: {json.dumps({
                                     'type': 'progress',
                                     'current': total_completed,
@@ -533,7 +568,9 @@ def register_routes(app):
                                     'percent': int(total_completed / total * 100),
                                     'paper_id': result.get('paper_id'),
                                     'title': result.get('title'),
-                                    'filtered': True
+                                    'filtered': True,
+                                    'relevance': result.get('relevance'),
+                                    'value': result.get('value')
                                 })}\n\n"
                             elif not result.get('success'):
                                 failed_count += 1
@@ -556,7 +593,9 @@ def register_routes(app):
                                     'paper_id': result.get('paper_id'),
                                     'title': result.get('title'),
                                     'relevance': result.get('relevance'),
-                                    'value': result.get('value')
+                                    'value': result.get('value'),
+                                    'old_relevance': result.get('old_relevance'),
+                                    'old_value': result.get('old_value')
                                 })}\n\n"
 
                             yield data
@@ -574,20 +613,28 @@ def register_routes(app):
                         status='success' if failed_count == 0 else 'partial',
                         operation_details={
                             'domain_name': domain.name,
+                            'total': total,
                             'success_count': success_count,
-                            'failed_count': failed_count
+                            'failed_count': failed_count,
+                            'filtered_count': filtered_count
                         },
                         papers_affected=success_count
                     )
                 except Exception as log_error:
                     logger.error(f"记录重新评分日志失败: {log_error}")
 
-                # 发送完成事件
+                # 发送完成事件，包含完整统计和详情
+                # 只返回前20条分数变化示例
+                changes_sample = score_changes[:20] if score_changes else []
+
                 data = f"data: {json.dumps({
                     'type': 'complete',
                     'total': total,
                     'success': success_count,
-                    'failed': failed_count
+                    'failed': failed_count,
+                    'filtered': filtered_count,
+                    'score_changes_count': len(score_changes),
+                    'score_changes_sample': changes_sample
                 })}\n\n"
                 yield data
 

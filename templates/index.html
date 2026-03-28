@@ -1719,13 +1719,62 @@ async function saveAndRescoreDomain() {
                                 document.getElementById('rescoreProgressBar').classList.remove('progress-bar-animated');
                                 document.getElementById('rescoreProgressBar').classList.add('bg-success');
 
-                                showToast(`重新评分完成！成功: ${data.success} 篇, 失败: ${data.failed} 篇`, 'success');
+                                // 显示完整统计
+                                const total = data.total || 0;
+                                const success = data.success || 0;
+                                const failed = data.failed || 0;
+                                const filtered = data.filtered || 0;
+                                const changesCount = data.score_changes_count || 0;
+                                const changesSample = data.score_changes_sample || [];
+
+                                let resultMsg = `重新评分完成！\n\n`;
+                                resultMsg += `总计: ${total} 篇\n`;
+                                resultMsg += `✓ 保存成功: ${success} 篇\n`;
+                                if (filtered > 0) {
+                                    resultMsg += `○ 被过滤(低于阈值): ${filtered} 篇\n`;
+                                }
+                                if (failed > 0) {
+                                    resultMsg += `✗ 评估失败: ${failed} 篇\n`;
+                                }
+
+                                // 显示分数变化详情
+                                if (changesCount > 0) {
+                                    resultMsg += `\n分数变化记录: ${changesCount} 篇\n`;
+
+                                    const hasChanges = changesSample.filter(c => !c.filtered && (
+                                        (c.old_relevance !== c.new_relevance) ||
+                                        (c.old_value !== c.new_value)
+                                    ));
+
+                                    if (hasChanges.length > 0) {
+                                        resultMsg += `\n分数发生变化 (${hasChanges.length} 篇):\n`;
+                                        hasChanges.slice(0, 10).forEach(c => {
+                                            const relevanceChange = c.old_relevance !== null && c.new_relevance !== null
+                                                ? `${c.old_relevance} → ${c.new_relevance}`
+                                                : '未评分 → ' + c.new_relevance;
+                                            const valueChange = c.old_value !== null && c.new_value !== null
+                                                ? `${c.old_value} → ${c.new_value}`
+                                                : '未评分 → ' + c.new_value;
+
+                                            resultMsg += `  • ${c.title}:\n`;
+                                            resultMsg += `    相关度: ${relevanceChange}\n`;
+                                            resultMsg += `    价值: ${valueChange}\n`;
+                                        });
+
+                                        if (hasChanges.length > 10) {
+                                            resultMsg += `  ... 还有 ${hasChanges.length - 10} 篇\n`;
+                                        }
+                                    }
+                                }
+
+                                alert(resultMsg);
+                                showToast(`重新评分完成！成功: ${success} 篇`, 'success');
 
                                 setTimeout(() => {
                                     const modal = bootstrap.Modal.getInstance(document.getElementById('editDomainModal'));
                                     modal.hide();
                                     location.reload();
-                                }, 1500);
+                                }, 2000);
                             } else if (data.type === 'error') {
                                 document.getElementById('rescoreStatus').textContent = '❌ 发生错误';
                                 document.getElementById('rescoreProgressBar').classList.add('bg-danger');
