@@ -75,9 +75,9 @@ def register_routes(app):
         per_page = Config.PAPERS_PER_PAGE
         domain_id = request.args.get('domain', type=int)
         keyword = request.args.get('q', '').strip()
-        sources = request.args.get('sources', '').split(',') if request.args.get('sources') else []
+        sources = request.args.getlist('source')  # 支持多个source参数
         year = request.args.get('year', type=int)
-        sort = request.args.get('sort', 'date')  # date, title
+        sort = request.args.get('sort', 'date')  # date, title, score_desc, score_asc
 
         # 构建查询
         query = Paper.query
@@ -108,6 +108,10 @@ def register_routes(app):
         # 排序
         if sort == 'title':
             query = query.order_by(Paper.title.asc())
+        elif sort == 'score_desc':
+            query = query.order_by(Paper.llm_score.desc().nulls_last(), Paper.published_date.desc())
+        elif sort == 'score_asc':
+            query = query.order_by(Paper.llm_score.asc().nulls_last(), Paper.published_date.desc())
         else:  # date
             query = query.order_by(Paper.published_date.desc())
 
@@ -168,12 +172,25 @@ def register_routes(app):
         page = request.args.get('page', 1, type=int)
         per_page = request.args.get('per_page', Config.PAPERS_PER_PAGE, type=int)
         domain_id = request.args.get('domain', type=int)
+        sort_by = request.args.get('sort', 'date')  # date, score_asc, score_desc
+        sources = request.args.getlist('source')  # arxiv, dblp, s2
 
         query = Paper.query
         if domain_id:
             query = query.filter_by(domain_id=domain_id)
 
-        query = query.order_by(Paper.published_date.desc())
+        # 数据源过滤
+        if sources:
+            query = query.filter(Paper.source.in_(sources))
+
+        # 排序
+        if sort_by == 'score_desc':
+            query = query.order_by(Paper.llm_score.desc().nulls_last(), Paper.published_date.desc())
+        elif sort_by == 'score_asc':
+            query = query.order_by(Paper.llm_score.asc().nulls_last(), Paper.published_date.desc())
+        else:  # date (默认)
+            query = query.order_by(Paper.published_date.desc())
+
         pagination = query.paginate(page=page, per_page=per_page, error_out=False)
 
         return jsonify({
@@ -226,6 +243,33 @@ def register_routes(app):
             db.session.delete(domain)
             db.session.commit()
             return jsonify({'success': True, 'message': '领域已删除'})
+        except Exception as e:
+            db.session.rollback()
+            return jsonify({'success': False, 'message': str(e)}), 500
+
+    @app.route('/api/domains/<int:domain_id>', methods=['PUT', 'PATCH'])
+    def api_update_domain(domain_id):
+        """API: 更新领域"""
+        domain = Domain.query.get_or_404(domain_id)
+        data = request.get_json() or {}
+
+        try:
+            # 更新字段
+            if 'name' in data:
+                domain.name = data['name']
+            if 'keywords' in data:
+                domain.keywords = data['keywords']
+            if 'arxiv_categories' in data:
+                domain.arxiv_categories = data['arxiv_categories']
+            if 'ccf_venues' in data:
+                domain.ccf_venues = data['ccf_venues']
+            if 'enabled' in data:
+                domain.enabled = data['enabled']
+            if 'llm_prompt' in data:
+                domain.llm_prompt = data['llm_prompt']
+
+            db.session.commit()
+            return jsonify({'success': True, 'domain': domain.to_dict()})
         except Exception as e:
             db.session.rollback()
             return jsonify({'success': False, 'message': str(e)}), 500

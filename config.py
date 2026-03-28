@@ -57,13 +57,40 @@ class Config:
     }
 
     # LLM 系统提示词 (用于评估论文相关性)
-    LLM_SYSTEM_PROMPT = (
-        "You are an academic research assistant. Evaluate the relevance of the following paper "
-        "to this specific research context: Automated smart contract vulnerability repair using "
-        "multi-agent systems, LLM-based software engineering, and the analysis of real-world DeFi "
-        "exploit incidents for benchmark datasets. Score the relevance from 0 to 100. Return ONLY "
-        "the integer score."
+
+    # 通用默认prompt（适用于所有学术领域）
+    LLM_DEFAULT_PROMPT = (
+        "You are an academic research assistant. Evaluate the research value and relevance "
+        "of the following paper. Consider factors such as: novelty of the approach, technical "
+        "soundness, practical applicability, and alignment with current research trends. "
+        "Score the relevance from 0 to 100. Return ONLY the integer score."
     )
+
+    # 环境变量自定义prompt（优先级最高）
+    LLM_SYSTEM_PROMPT = os.environ.get('LLM_SYSTEM_PROMPT', LLM_DEFAULT_PROMPT)
+
+    # 各领域的预设prompt（可以作为示例）
+    LLM_DOMAIN_PROMPTS = {
+        'smart_contract_repair': (
+            "You are an academic research assistant specializing in blockchain security. "
+            "Evaluate the relevance of the following paper to: Automated smart contract "
+            "vulnerability repair using multi-agent systems, LLM-based software engineering, "
+            "and the analysis of real-world DeFi exploit incidents. Score from 0 to 100. "
+            "Return ONLY the integer score."
+        ),
+        'llm_automation': (
+            "You are an academic research assistant specializing in AI and software engineering. "
+            "Evaluate the relevance of the following paper to: Multi-agent systems, automated "
+            "program repair, LLM-based code generation, and intelligent software engineering. "
+            "Score from 0 to 100. Return ONLY the integer score."
+        ),
+        'general_cs': (
+            "You are an academic research assistant. Evaluate the research value and quality "
+            "of the following computer science paper. Consider: novelty, methodology rigor, "
+            "experimental validation, and contribution to the field. Score from 0 to 100. "
+            "Return ONLY the integer score."
+        )
+    }
 
     # API 端点
     ARXIV_API_URL = 'http://export.arxiv.org/api/query'

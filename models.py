@@ -17,6 +17,7 @@ class Domain(db.Model):
     arxiv_categories = db.Column(db.JSON, default=list)
     ccf_venues = db.Column(db.JSON, default=list)
     enabled = db.Column(db.Boolean, default=True, index=True)
+    llm_prompt = db.Column(db.Text, nullable=True)  # 领域专用的LLM评估prompt
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -35,6 +36,7 @@ class Domain(db.Model):
             'arxiv_categories': self.arxiv_categories,
             'ccf_venues': self.ccf_venues,
             'enabled': self.enabled,
+            'llm_prompt': self.llm_prompt,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'paper_count': self.papers.count()
         }
@@ -101,6 +103,7 @@ class Paper(db.Model):
     published_date = db.Column(db.DateTime, index=True)
     fetched_date = db.Column(db.DateTime, default=datetime.utcnow, index=True)
     is_favorite = db.Column(db.Boolean, default=False, index=True)  # 是否收藏
+    llm_score = db.Column(db.Integer, nullable=True)  # LLM 相关度评分 (0-100)
 
     # 外键关联
     domain_id = db.Column(db.Integer, db.ForeignKey('domains.id'), nullable=False, index=True)
@@ -133,7 +136,8 @@ class Paper(db.Model):
             'published_date': self.published_date.isoformat() if self.published_date else None,
             'fetched_date': self.fetched_date.isoformat() if self.fetched_date else None,
             'domain_id': self.domain_id,
-            'is_favorite': self.is_favorite
+            'is_favorite': self.is_favorite,
+            'llm_score': self.llm_score
         }
 
     @staticmethod

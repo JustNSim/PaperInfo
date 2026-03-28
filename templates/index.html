@@ -13,11 +13,16 @@
             <div class="card-body">
                 <!-- 领域选择 -->
                 <div class="mb-3">
-                    <label class="form-label fw-bold">研究领域</label>
-                    <select class="form-select" id="domainFilter" name="domain">
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <label class="form-label fw-bold mb-0">研究领域</label>
+                        <button class="btn btn-sm btn-outline-primary" onclick="editSelectedDomain()" id="editDomainBtn" title="编辑选中领域的配置">
+                            <i class="bi bi-gear"></i> 编辑
+                        </button>
+                    </div>
+                    <select class="form-select" id="domainFilter" name="domain" onchange="updateEditDomainButton()">
                         <option value="">全部领域</option>
                         {% for domain in domains %}
-                        <option value="{{ domain.id }}" {% if domain_id == domain.id %}selected{% endif %}>
+                        <option value="{{ domain.id }}" data-prompt="{{ domain.llm_prompt or '' }}" {% if domain_id == domain.id %}selected{% endif %}>
                             {{ domain.name }} ({{ domain.paper_count }})
                         </option>
                         {% endfor %}
@@ -103,8 +108,11 @@
                     <a href="?{% if request.args %}{% for k, v in request.args.items() %}{% if k != 'sort' %}{{ k }}={{ v }}&{% endif %}{% endfor %}{% endif %}sort=date" class="btn btn-outline-secondary">
                         <i class="bi bi-calendar3"></i> 日期
                     </a>
-                    <a href="?{% if request.args %}{% for k, v in request.args.items() %}{% if k != 'sort' %}{{ k }}={{ v }}&{% endif %}{% endfor %}{% endif %}sort=title" class="btn btn-outline-secondary">
-                        <i class="bi bi-sort-alpha-down"></i> 标题
+                    <a href="?{% if request.args %}{% for k, v in request.args.items() %}{% if k != 'sort' %}{{ k }}={{ v }}&{% endif %}{% endfor %}{% endif %}sort=score_desc" class="btn btn-outline-success">
+                        <i class="bi bi-sort-numeric-down"></i> 相关度&#8595;
+                    </a>
+                    <a href="?{% if request.args %}{% for k, v in request.args.items() %}{% if k != 'sort' %}{{ k }}={{ v }}&{% endif %}{% endfor %}{% endif %}sort=score_asc" class="btn btn-outline-success">
+                        <i class="bi bi-sort-numeric-up"></i> 相关度&#8593;
                     </a>
                     <button class="btn btn-outline-success" onclick="exportToBibTeX()" title="导出为 BibTeX 格式">
                         <i class="bi bi-file-earmark-code"></i> BibTeX
@@ -183,6 +191,11 @@
                         {% endif %}
                         {% if paper.year %}
                         <span class="badge bg-info text-dark">{{ paper.year }}</span>
+                        {% endif %}
+                        {% if paper.llm_score is not none %}
+                        <span class="badge bg-success" title="LLM相关度评分">
+                            <i class="bi bi-bar-chart-fill"></i> {{ paper.llm_score }}/100
+                        </span>
                         {% endif %}
                     </div>
 
@@ -331,11 +344,9 @@ function applyFilters() {
     if (domain) params.set('domain', domain);
 
     // 数据源
-    const sources = [];
-    if (document.getElementById('sourceArxiv').checked) sources.push('arxiv');
-    if (document.getElementById('sourceDblp').checked) sources.push('dblp');
-    if (document.getElementById('sourceS2').checked) sources.push('s2');
-    if (sources.length > 0) params.set('sources', sources.join(','));
+    if (document.getElementById('sourceArxiv').checked) params.append('source', 'arxiv');
+    if (document.getElementById('sourceDblp').checked) params.append('source', 'dblp');
+    if (document.getElementById('sourceS2').checked) params.append('source', 's2');
 
     // 年份
     const year = document.getElementById('yearFilter').value;
@@ -444,10 +455,34 @@ function loadTranslationsFromStorage() {
         if (savedTitles) {
             translations.titles = JSON.parse(savedTitles);
             console.log('已恢复标题翻译:', Object.keys(translations.titles).length, '篇');
+            // 更新页面上的标题
+            for (const [paperId, translated] of Object.entries(translations.titles)) {
+                const titleEl = document.getElementById(`title-${paperId}`);
+                if (titleEl) {
+                    titleEl.innerHTML = `<span class="translated-badge" title="译文">${translated}</span>`;
+                }
+            }
         }
         if (savedAbstracts) {
             translations.abstracts = JSON.parse(savedAbstracts);
             console.log('已恢复摘要翻译:', Object.keys(translations.abstracts).length, '篇');
+            // 更新页面上的摘要
+            for (const [paperId, translated] of Object.entries(translations.abstracts)) {
+                const abstractEl = document.getElementById(`abstract-${paperId}`);
+                if (abstractEl) {
+                    const isExpanded = abstractEl.dataset.expanded === 'true';
+                    const displayText = isExpanded ? translated : (translated.length > 300 ? translated.substring(0, 300) + '...' : translated);
+                    abstractEl.innerHTML = `<small>${displayText}</small>`;
+                }
+            }
+        }
+        // 更新翻译按钮状态
+        for (const paperId of Object.keys(translations.titles)) {
+            const btn = document.getElementById(`translate-btn-${paperId}`);
+            if (btn) {
+                btn.innerHTML = '<i class="bi bi-translate"></i> 还原';
+                btn.onclick = () => restorePaper(paperId);
+            }
         }
     } catch (err) {
         console.error('恢复翻译结果失败:', err);
@@ -1075,5 +1110,156 @@ function clearSelection() {
     document.querySelectorAll('.paper-checkbox').forEach(cb => cb.checked = false);
     updateSelectedCount();
 }
+
+// ============== 领域编辑功能 ==============
+
+// 更新编辑按钮状态
+function updateEditDomainButton() {
+    const select = document.getElementById('domainFilter');
+    const editBtn = document.getElementById('editDomainBtn');
+    if (select.value) {
+        editBtn.disabled = false;
+    } else {
+        editBtn.disabled = true;
+    }
+}
+
+// 编辑选中的领域
+function editSelectedDomain() {
+    const select = document.getElementById('domainFilter');
+    const domainId = select.value;
+
+    if (!domainId) {
+        showToast('请先选择一个领域', 'warning');
+        return;
+    }
+
+    // 获取选中领域的prompt
+    const selectedOption = select.options[select.selectedIndex];
+    const currentPrompt = selectedOption.getAttribute('data-prompt') || '';
+
+    // 显示编辑模态框
+    const domainName = selectedOption.text.split(' (')[0];
+    document.getElementById('editDomainName').textContent = domainName;
+    document.getElementById('editDomainId').value = domainId;
+    document.getElementById('editDomainPrompt').value = currentPrompt;
+
+    // 显示预设prompt选项
+    const presetPrompts = {
+        'smart_contract_repair': '智能合约修复专用 - 针对区块链安全、智能合约漏洞修复、多智能体系统等方向',
+        'llm_automation': '大模型自动化 - 针对多智能体系统、自动程序修复、LLM代码生成等方向',
+        'general_cs': '通用计算机科学 - 评估论文的学术价值、创新性、方法严谨性等'
+    };
+
+    let presetHtml = '<div class="mb-3"><label class="form-label text-muted">预设模板（点击使用）:</label><div class="d-flex flex-wrap gap-2">';
+    for (const [key, label] of Object.entries(presetPrompts)) {
+        presetHtml += `<button type="button" class="btn btn-sm btn-outline-secondary" onclick="loadPresetPrompt('${key}')">${label}</button>`;
+    }
+    presetHtml += '</div></div>';
+    document.getElementById('presetPromptOptions').innerHTML = presetHtml;
+
+    // 显示模态框
+    const modal = new bootstrap.Modal(document.getElementById('editDomainModal'));
+    modal.show();
+}
+
+// 加载预设prompt
+function loadPresetPrompt(presetKey) {
+    const presetPrompts = {
+        'smart_contract_repair': `You are an academic research assistant specializing in blockchain security. Evaluate the relevance of the following paper to: Automated smart contract vulnerability repair using multi-agent systems, LLM-based software engineering, and the analysis of real-world DeFi exploit incidents. Score from 0 to 100. Return ONLY the integer score.`,
+        'llm_automation': `You are an academic research assistant specializing in AI and software engineering. Evaluate the relevance of the following paper to: Multi-agent systems, automated program repair, LLM-based code generation, and intelligent software engineering. Score from 0 to 100. Return ONLY the integer score.`,
+        'general_cs': `You are an academic research assistant. Evaluate the research value and quality of the following computer science paper. Consider: novelty, methodology rigor, experimental validation, and contribution to the field. Score from 0 to 100. Return ONLY the integer score.`
+    };
+    document.getElementById('editDomainPrompt').value = presetPrompts[presetKey];
+}
+
+// 保存领域prompt
+async function saveDomainPrompt() {
+    const domainId = document.getElementById('editDomainId').value;
+    const prompt = document.getElementById('editDomainPrompt').value.trim();
+    const saveBtn = document.getElementById('savePromptBtn');
+
+    saveBtn.disabled = true;
+    saveBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> 保存中...';
+
+    try {
+        const response = await fetch(`/api/domains/${domainId}`, {
+            method: 'PATCH',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({llm_prompt: prompt || null})
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            showToast('领域配置已保存', 'success');
+            // 关闭模态框
+            const modal = bootstrap.Modal.getInstance(document.getElementById('editDomainModal'));
+            modal.hide();
+            // 刷新页面以更新配置
+            setTimeout(() => location.reload(), 500);
+        } else {
+            showToast('保存失败: ' + data.message, 'error');
+        }
+    } catch (err) {
+        showToast('保存失败: ' + err.message, 'error');
+    } finally {
+        saveBtn.disabled = false;
+        saveBtn.innerHTML = '<i class="bi bi-check-circle"></i> 保存';
+    }
+}
+
+// 页面加载时初始化编辑按钮状态
+document.addEventListener('DOMContentLoaded', function() {
+    updateEditDomainButton();
+});
 </script>
+
+<!-- 领域编辑模态框 -->
+<div class="modal fade" id="editDomainModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">
+                    <i class="bi bi-gear"></i> 编辑领域配置
+                    <span class="text-muted fs-6"> - <span id="editDomainName"></span></span>
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="editDomainId">
+
+                <div id="presetPromptOptions"></div>
+
+                <div class="mb-3">
+                    <label for="editDomainPrompt" class="form-label">
+                        <i class="bi bi-chat-text"></i> LLM评估Prompt
+                    </label>
+                    <textarea class="form-control font-monospace" id="editDomainPrompt" rows="8"
+                        placeholder="留空使用全局默认prompt..."></textarea>
+                    <div class="form-text">
+                        <i class="bi bi-info-circle"></i>
+                        此prompt用于评估该领域论文的相关度。留空则使用全局默认prompt。
+                    </div>
+                </div>
+
+                <div class="alert alert-info">
+                    <strong><i class="bi bi-lightbulb"></i> 提示：</strong>
+                    <ul class="mb-0 mt-2">
+                        <li>描述该领域的研究方向和关注点</li>
+                        <li>指定评估论文相关度时需要考虑的因素</li>
+                        <li>要求LLM返回0-100的整数评分</li>
+                        <li>使用"Return ONLY the integer score"确保只返回分数</li>
+                    </ul>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-primary" onclick="saveDomainPrompt()" id="savePromptBtn">
+                    <i class="bi bi-check-circle"></i> 保存
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
 {% endblock %}

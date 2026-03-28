@@ -87,6 +87,11 @@
                     {% if paper.year %}
                     <span class="badge bg-info text-dark">{{ paper.year }}</span>
                     {% endif %}
+                    {% if paper.llm_score is not none %}
+                    <span class="badge bg-success" title="LLM相关度评分">
+                        <i class="bi bi-bar-chart-fill"></i> {{ paper.llm_score }}/100
+                    </span>
+                    {% endif %}
                 </div>
 
                 <!-- 作者 -->
@@ -214,10 +219,34 @@ function loadTranslationsFromStorage() {
         if (savedTitles) {
             translations.titles = JSON.parse(savedTitles);
             console.log('已恢复标题翻译:', Object.keys(translations.titles).length, '篇');
+            // 更新页面上的标题
+            for (const [paperId, translated] of Object.entries(translations.titles)) {
+                const titleEl = document.getElementById(`title-${paperId}`);
+                if (titleEl) {
+                    titleEl.innerHTML = `<span class="translated-badge" title="译文">${translated}</span>`;
+                }
+            }
         }
         if (savedAbstracts) {
             translations.abstracts = JSON.parse(savedAbstracts);
             console.log('已恢复摘要翻译:', Object.keys(translations.abstracts).length, '篇');
+            // 更新页面上的摘要
+            for (const [paperId, translated] of Object.entries(translations.abstracts)) {
+                const abstractEl = document.getElementById(`abstract-${paperId}`);
+                if (abstractEl) {
+                    const isExpanded = abstractEl.dataset.expanded === 'true';
+                    const displayText = isExpanded ? translated : (translated.length > 300 ? translated.substring(0, 300) + '...' : translated);
+                    abstractEl.innerHTML = `<small>${displayText}</small>`;
+                }
+            }
+        }
+        // 更新翻译按钮状态
+        for (const paperId of Object.keys(translations.titles)) {
+            const btn = document.getElementById(`translate-btn-${paperId}`);
+            if (btn) {
+                btn.innerHTML = '<i class="bi bi-translate"></i> 还原';
+                btn.onclick = () => restorePaper(paperId);
+            }
         }
     } catch (err) {
         console.error('恢复翻译结果失败:', err);

@@ -34,9 +34,12 @@ llm_evaluator = None
 llm_filtered_count = 0
 
 
-def _get_llm_evaluator():
+def _get_llm_evaluator(domain=None):
     """
     获取或创建 LLM 评估器实例
+
+    Args:
+        domain: Domain对象，用于获取领域专用的prompt
 
     Returns:
         LLMEvaluator 实例（如果启用）或 None
@@ -46,29 +49,49 @@ def _get_llm_evaluator():
     if not Config.LLM_FILTER_ENABLED:
         return None
 
-    if llm_evaluator is None:
-        try:
-            # 根据提供商选择正确的模型配置
-            if Config.LLM_PROVIDER == 'custom':
-                model = Config.CUSTOM_LLM_MODEL
-            else:
-                model = Config.LLM_MODEL
+    try:
+        # 确定使用的prompt（优先级：领域prompt > 环境变量 > 默认prompt）
+        if domain and domain.llm_prompt:
+            system_prompt = domain.llm_prompt
+            prompt_source = f"领域 '{domain.name}'"
+        else:
+            system_prompt = Config.LLM_SYSTEM_PROMPT
+            prompt_source = "全局默认"
 
-            llm_evaluator = LLMEvaluator(
+        # 根据提供商选择正确的模型配置
+        if Config.LLM_PROVIDER == 'custom':
+            model = Config.CUSTOM_LLM_MODEL
+        else:
+            model = Config.LLM_MODEL
+
+        # 为每个领域或prompt创建独立的评估器实例
+        # 使用prompt的hash作为key来缓存
+        import hashlib
+        prompt_key = hashlib.md5(system_prompt.encode()).hexdigest()
+
+        if not hasattr(_get_llm_evaluator, '_cache'):
+            _get_llm_evaluator._cache = {}
+
+        if prompt_key not in _get_llm_evaluator._cache:
+            evaluator = LLMEvaluator(
                 provider=Config.LLM_PROVIDER,
                 api_key=Config.LLM_API_KEY,
                 model=model,
                 delay=Config.LLM_DELAY,
-                system_prompt=Config.LLM_SYSTEM_PROMPT,
+                system_prompt=system_prompt,
                 enabled=Config.LLM_FILTER_ENABLED
             )
-            logger.info(f"LLM 评估器已初始化: provider={Config.LLM_PROVIDER}, model={model}")
-        except LLMEvaluatorError as e:
-            logger.error(f"LLM 评估器初始化失败: {e}")
-            logger.warning("LLM 过滤已禁用，将继续保存所有论文")
-            return None
+            _get_llm_evaluator._cache[prompt_key] = evaluator
+            logger.info(f"LLM 评估器已初始化: provider={Config.LLM_PROVIDER}, model={model}, prompt={prompt_source}")
+        else:
+            evaluator = _get_llm_evaluator._cache[prompt_key]
 
-    return llm_evaluator
+        return evaluator
+
+    except LLMEvaluatorError as e:
+        logger.error(f"LLM 评估器初始化失败: {e}")
+        logger.warning("LLM 过滤已禁用，将继续保存所有论文")
+        return None
 
 
 def _get_fetch_date_range():
@@ -307,8 +330,8 @@ def _save_papers(papers: list, domain: Domain) -> int:
     batch = []  # 当前批次的论文
     committed_count = 0  # 已提交的论文数
 
-    # 获取 LLM 评估器
-    evaluator = _get_llm_evaluator()
+    # 获取 LLM 评估器（传入领域对象以获取领域专用的prompt）
+    evaluator = _get_llm_evaluator(domain)
 
     for paper_data in papers:
         try:
@@ -318,6 +341,7 @@ def _save_papers(papers: list, domain: Domain) -> int:
                 continue
 
             # LLM 相关性评估
+            llm_score = None
             if evaluator:
                 eval_result = evaluator.evaluate(
                     title=paper_data.get('title', ''),
@@ -327,6 +351,8 @@ def _save_papers(papers: list, domain: Domain) -> int:
                 if eval_result.error:
                     logger.warning(f"LLM 评估出错，跳过论文: {paper_data.get('title', '')[:50]} - {eval_result.error}")
                     continue
+
+                llm_score = eval_result.score
 
                 if eval_result.score < Config.LLM_FILTER_THRESHOLD:
                     logger.debug(f"LLM 评分 {eval_result.score} < {Config.LLM_FILTER_THRESHOLD}，跳过: {paper_data.get('title', '')[:50]}")
@@ -348,7 +374,8 @@ def _save_papers(papers: list, domain: Domain) -> int:
                 url=paper_data.get('url'),
                 pdf_url=paper_data.get('pdf_url'),
                 published_date=paper_data.get('published_date'),
-                domain_id=domain.id
+                domain_id=domain.id,
+                llm_score=llm_score
             )
 
             batch.append(paper)
