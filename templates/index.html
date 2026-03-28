@@ -593,6 +593,8 @@ function restorePaper(paperId) {
 }
 
 // 翻译文本（使用免费翻译 API）
+// 注意：此函数与 main.js 中的 translateText 功能相同，但保留在此处以访问页面特定的 translations 对象
+// TODO: 重构为使用 main.js 中的共享函数
 async function translateText(text) {
     // MyMemory API 有长度限制，分段翻译长文本
     const MAX_LENGTH = 500;
@@ -626,6 +628,8 @@ async function translateText(text) {
 }
 
 // 执行实际翻译
+// 注意：此函数与 main.js 中的 doTranslate 功能相同
+// TODO: 考虑使用 main.js 中的共享函数
 async function doTranslate(text) {
     try {
         // 使用 MyMemory Translation API
@@ -659,6 +663,8 @@ async function doTranslate(text) {
 }
 
 // 备用翻译方案（使用免费的 LibreTranslate API）
+// 注意：此函数与 main.js 中的 fallbackTranslate 功能相同
+// TODO: 考虑使用 main.js 中的共享函数
 async function fallbackTranslate(text) {
     try {
         // 使用 LibreTranslate 的公共实例
@@ -691,6 +697,8 @@ async function fallbackTranslate(text) {
 }
 
 // 分割文本为合适长度的块
+// 注意：此函数与 main.js 中的 splitText 功能相同
+// TODO: 考虑使用 main.js 中的共享函数
 function splitText(text, maxLength) {
     const chunks = [];
     const sentences = text.split(/(?<=[.!?。！？])\s+/);

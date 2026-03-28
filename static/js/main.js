@@ -200,3 +200,162 @@ if (searchInput.length) {
 
     searchInput.on('input', debouncedSearch);
 }
+
+// ============== 翻译功能（公共函数） ==============
+
+/**
+ * 翻译文本（支持分段）
+ * @param {string} text - 要翻译的文本
+ * @returns {Promise<string>} 翻译结果
+ */
+async function translateText(text) {
+    const MAX_LENGTH = 500;
+    const textToTranslate = text.trim();
+
+    if (textToTranslate.length <= MAX_LENGTH) {
+        return await doTranslate(textToTranslate);
+    }
+
+    const chunks = splitText(textToTranslate, MAX_LENGTH);
+    const translatedChunks = [];
+
+    for (let i = 0; i < chunks.length; i++) {
+        try {
+            const translated = await doTranslate(chunks[i]);
+            translatedChunks.push(translated);
+            if (i < chunks.length - 1) {
+                await new Promise(resolve => setTimeout(resolve, 300));
+            }
+        } catch (err) {
+            console.error(`翻译第 ${i + 1} 段失败:`, err);
+            translatedChunks.push(chunks[i]);
+        }
+    }
+
+    return translatedChunks.join('');
+}
+
+/**
+ * 执行翻译API调用
+ * @param {string} text - 要翻译的文本
+ * @returns {Promise<string>} 翻译结果
+ */
+async function doTranslate(text) {
+    try {
+        const url = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=en|zh-CN`;
+        const response = await fetch(url);
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        const data = await response.json();
+        if (data.responseStatus === 200 && data.responseData && data.responseData.translatedText) {
+            return data.responseData.translatedText;
+        }
+        if (data.responseStatus === 403 || data.responseStatus === 429) {
+            return await fallbackTranslate(text);
+        }
+        throw new Error(data.responseDetails || 'API 返回错误');
+    } catch (err) {
+        console.error('翻译请求失败:', err);
+        return await fallbackTranslate(text);
+    }
+}
+
+/**
+ * 备用翻译服务（LibreTranslate）
+ * @param {string} text - 要翻译的文本
+ * @returns {Promise<string>} 翻译结果
+ */
+async function fallbackTranslate(text) {
+    try {
+        const url = 'https://libretranslate.com/translate';
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                q: text,
+                source: 'en',
+                target: 'zh',
+                format: 'text'
+            })
+        });
+        if (!response.ok) {
+            throw new Error(`LibreTranslate HTTP ${response.status}`);
+        }
+        const data = await response.json();
+        return data.translatedText;
+    } catch (err) {
+        console.error('备用翻译也失败:', err);
+        throw new Error('翻译服务暂时不可用，请稍后重试');
+    }
+}
+
+/**
+ * 分割文本为指定长度的块
+ * @param {string} text - 要分割的文本
+ * @param {number} maxLength - 最大长度
+ * @returns {string[]} 分割后的文本数组
+ */
+function splitText(text, maxLength) {
+    const chunks = [];
+    const sentences = text.split(/(?<=[.!?。！？])\s+/);
+    let currentChunk = '';
+
+    for (const sentence of sentences) {
+        if ((currentChunk + sentence).length <= maxLength) {
+            currentChunk += (currentChunk ? ' ' : '') + sentence;
+        } else {
+            if (currentChunk) {
+                chunks.push(currentChunk.trim());
+            }
+            currentChunk = sentence;
+        }
+    }
+
+    if (currentChunk) {
+        chunks.push(currentChunk.trim());
+    }
+
+    return chunks;
+}
+
+// ============== localStorage 管理（公共函数） ==============
+
+/**
+ * 从 localStorage 加载翻译结果
+ * @param {Object} translations - 翻译存储对象 {titles: {}, abstracts: {}}
+ * @param {string} titlesKey - 标题翻译的 localStorage 键
+ * @param {string} abstractsKey - 摘要翻译的 localStorage 键
+ */
+function loadTranslationsFromStorage(translations, titlesKey, abstractsKey) {
+    try {
+        const savedTitles = localStorage.getItem(titlesKey);
+        const savedAbstracts = localStorage.getItem(abstractsKey);
+
+        if (savedTitles) {
+            translations.titles = JSON.parse(savedTitles);
+            console.log('已恢复标题翻译:', Object.keys(translations.titles).length, '篇');
+        }
+        if (savedAbstracts) {
+            translations.abstracts = JSON.parse(savedAbstracts);
+            console.log('已恢复摘要翻译:', Object.keys(translations.abstracts).length, '篇');
+        }
+    } catch (err) {
+        console.error('恢复翻译结果失败:', err);
+    }
+}
+
+/**
+ * 保存翻译结果到 localStorage
+ * @param {Object} translations - 翻译存储对象 {titles: {}, abstracts: {}}
+ * @param {string} titlesKey - 标题翻译的 localStorage 键
+ * @param {string} abstractsKey - 摘要翻译的 localStorage 键
+ */
+function saveTranslationsToStorage(translations, titlesKey, abstractsKey) {
+    try {
+        localStorage.setItem(titlesKey, JSON.stringify(translations.titles));
+        localStorage.setItem(abstractsKey, JSON.stringify(translations.abstracts));
+    } catch (err) {
+        console.error('保存翻译结果失败:', err);
+    }
+}

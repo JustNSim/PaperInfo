@@ -622,6 +622,8 @@ function restorePaper(paperId) {
     btn.onclick = () => translatePaper(paperId);
 }
 
+// 注意：以下翻译函数与 main.js 中的函数功能相同
+// TODO: 考虑重构为使用 main.js 中的共享函数
 async function translateText(text) {
     const MAX_LENGTH = 500;
     const textToTranslate = text.trim();
