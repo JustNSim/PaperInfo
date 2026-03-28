@@ -1,0 +1,573 @@
+{% extends "base.html" %}
+
+{% block title %}PaperInfo - 我的收藏{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2>
+            <i class="bi bi-star-fill text-warning"></i> 我的收藏
+            <span class="badge bg-warning text-dark ms-2">{{ total }}</span>
+        </h2>
+        <a href="/" class="btn btn-outline-primary">
+            <i class="bi bi-arrow-left"></i> 返回论文列表
+        </a>
+    </div>
+
+    <!-- 批量操作 -->
+    <div class="alert alert-info">
+        <div class="d-flex justify-content-between align-items-center">
+            <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="selectAllFav" onchange="toggleSelectAllFav()">
+                <label class="form-check-label ms-2" for="selectAllFav">
+                    全选 (<span id="selectedCountFav">0</span>/{{ total }})
+                </label>
+            </div>
+            <div class="btn-group btn-group-sm">
+                <button class="btn btn-outline-secondary" onclick="batchUnfavoriteFav()" id="batchUnfavBtnFav" disabled>
+                    <i class="bi bi-star"></i> 取消收藏
+                </button>
+                <button class="btn btn-outline-danger" onclick="confirmBatchDeleteFav()" id="batchDeleteBtnFav" disabled>
+                    <i class="bi bi-trash3"></i> 删除
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 论文列表 -->
+    <div id="paperList">
+        {% for paper in papers %}
+        <div class="card mb-3 paper-card" data-id="{{ paper.id }}" data-favorite="true">
+            <div class="card-body">
+                <!-- 顶部：复选框 + 收藏状态 -->
+                <div class="d-flex justify-content-between align-items-start mb-2">
+                    <div class="form-check">
+                        <input class="form-check-input paper-checkbox-fav" type="checkbox"
+                               value="{{ paper.id }}" onchange="updateSelectedCountFav()">
+                        <label class="form-check-label"></label>
+                    </div>
+                    <span class="badge bg-warning text-dark">
+                        <i class="bi bi-star-fill"></i> 已收藏
+                    </span>
+                </div>
+
+                <!-- 标题和来源 -->
+                <h5 class="card-title d-flex align-items-start gap-2">
+                    <a href="{{ paper.url }}" target="_blank" class="text-decoration-none flex-grow-1" id="title-{{ paper.id }}">{{ paper.title }}</a>
+                    <button class="btn btn-sm btn-link p-0 text-primary" onclick="translateTitle({{ paper.id }})" title="翻译标题">
+                        <i class="bi bi-translate"></i>
+                    </button>
+                </h5>
+
+                <!-- 元信息 -->
+                <div class="mb-2">
+                    <span class="badge bg-primary">{{ paper.source }}</span>
+                    {% if paper.venue %}
+                    <span class="badge bg-secondary">{{ paper.venue }}</span>
+                    {% endif %}
+                    {% if paper.year %}
+                    <span class="badge bg-info text-dark">{{ paper.year }}</span>
+                    {% endif %}
+                </div>
+
+                <!-- 作者 -->
+                <p class="card-text text-muted mb-2">
+                    <small><i class="bi bi-people"></i> {{ paper.authors|join(', ') }}</small>
+                </p>
+
+                <!-- 摘要 -->
+                {% if paper.abstract %}
+                <div class="d-flex align-items-start gap-2">
+                    <div class="flex-grow-1">
+                        <p class="card-text abstract-text mb-0" id="abstract-{{ paper.id }}">
+                            <small>{{ paper.abstract[:300] }}{% if paper.abstract|length > 300 %}...{% endif %}</small>
+                        </p>
+                    </div>
+                    <button class="btn btn-sm btn-link p-0 text-primary flex-shrink-0" onclick="translateAbstract({{ paper.id }})" title="翻译摘要">
+                        <i class="bi bi-translate"></i>
+                    </button>
+                </div>
+                {% if paper.abstract|length > 300 %}
+                <button class="btn btn-sm btn-link p-0" onclick="toggleAbstract({{ paper.id }})">
+                    <span id="abstract-toggle-{{ paper.id }}">展开全文</span>
+                </button>
+                {% endif %}
+                {% endif %}
+
+                <!-- 操作按钮 -->
+                <div class="mt-2">
+                    {% if paper.url %}
+                    <a href="{{ paper.url }}" target="_blank" class="btn btn-sm btn-outline-primary">
+                        <i class="bi bi-link-45deg"></i> 原文链接
+                    </a>
+                    {% endif %}
+                    {% if paper.pdf_url %}
+                    <a href="{{ paper.pdf_url }}" target="_blank" class="btn btn-sm btn-outline-danger">
+                        <i class="bi bi-file-pdf"></i> PDF
+                    </a>
+                    {% endif %}
+                    <button class="btn btn-sm btn-outline-secondary" onclick="singleUnfavorite({{ paper.id }})">
+                        <i class="bi bi-star"></i> 取消收藏
+                    </button>
+                    <small class="text-muted ms-3">
+                        发布于: {{ paper.published_date.strftime('%Y-%m-%d') if paper.published_date else 'N/A' }}
+                    </small>
+                </div>
+            </div>
+        </div>
+        {% else %}
+        <div class="alert alert-warning">
+            <i class="bi bi-inbox"></i> 还没有收藏的论文，去论文列表收藏一些吧！
+            <a href="/" class="btn btn-primary btn-sm ms-3">浏览论文</a>
+        </div>
+        {% endfor %}
+    </div>
+
+    <!-- 分页 -->
+    {% if total > per_page %}
+    <nav aria-label="分页导航">
+        <ul class="pagination justify-content-center">
+            {% if page > 1 %}
+            <li class="page-item">
+                <a class="page-link" href="?page={{ page - 1 }}{{ query_string }}">上一页</a>
+            </li>
+            {% endif %}
+
+            {% for p in range(1, total_pages + 1) %}
+            {% if p == page %}
+            <li class="page-item active">
+                <span class="page-link">{{ p }}</span>
+            </li>
+            {% elif p <= 3 or p > total_pages - 3 or (p >= page - 1 and p <= page + 1) %}
+            <li class="page-item">
+                <a class="page-link" href="?page={{ p }}{{ query_string }}">{{ p }}</a>
+            </li>
+            {% elif p == 4 or p == total_pages - 3 %}
+            <li class="page-item disabled"><span class="page-link">...</span></li>
+            {% endif %}
+            {% endfor %}
+
+            {% if page < total_pages %}
+            <li class="page-item">
+                <a class="page-link" href="?page={{ page + 1 }}{{ query_string }}">下一页</a>
+            </li>
+            {% endif %}
+        </ul>
+    </nav>
+    {% endif %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// 从主页复用的数据
+const abstracts = {
+    {% for paper in papers %}
+    {% if paper.abstract %}
+    {{ paper.id }}: {{ paper.abstract | tojson }},
+    {% endif %}
+    {% endfor %}
+};
+
+const originalTitles = {
+    {% for paper in papers %}
+    {{ paper.id }}: {{ paper.title | tojson }},
+    {% endfor %}
+};
+
+const translations = {
+    titles: {},
+    abstracts: {}
+};
+
+// 翻译功能
+function toggleAbstract(paperId) {
+    const abstractEl = document.getElementById(`abstract-${paperId}`);
+    const toggleEl = document.getElementById(`abstract-toggle-${paperId}`);
+
+    // 获取当前应该显示的完整内容（原文或译文）
+    const fullText = translations.abstracts[paperId] || abstracts[paperId];
+    const isTranslated = !!translations.abstracts[paperId];
+
+    if (abstractEl.dataset.expanded === 'true') {
+        // 收起
+        abstractEl.innerHTML = `<small>${fullText.substring(0, 300)}...</small>`;
+        toggleEl.textContent = '展开全文';
+        abstractEl.dataset.expanded = 'false';
+    } else {
+        // 展开
+        abstractEl.innerHTML = `<small>${fullText}</small>`;
+        toggleEl.textContent = '收起';
+        abstractEl.dataset.expanded = 'true';
+    }
+
+    // 如果是翻译状态，确保CSS样式正确
+    if (isTranslated) {
+        abstractEl.classList.add('translated');
+    }
+}
+
+// 收藏页面特有函数
+function toggleSelectAllFav() {
+    const selectAll = document.getElementById('selectAllFav');
+    const checkboxes = document.querySelectorAll('.paper-checkbox-fav');
+
+    checkboxes.forEach(cb => {
+        cb.checked = selectAll.checked;
+    });
+
+    updateSelectedCountFav();
+}
+
+function updateSelectedCountFav() {
+    const checkboxes = document.querySelectorAll('.paper-checkbox-fav');
+    const selected = Array.from(checkboxes).filter(cb => cb.checked);
+
+    document.getElementById('selectedCountFav').textContent = selected.length;
+
+    const hasSelection = selected.length > 0;
+    document.getElementById('batchUnfavBtnFav').disabled = !hasSelection;
+    document.getElementById('batchDeleteBtnFav').disabled = !hasSelection;
+}
+
+function getSelectedPaperIdsFav() {
+    const checkboxes = document.querySelectorAll('.paper-checkbox-fav:checked');
+    return Array.from(checkboxes).map(cb => parseInt(cb.value));
+}
+
+async function batchUnfavoriteFav() {
+    const paperIds = getSelectedPaperIdsFav();
+
+    if (paperIds.length === 0) {
+        showToast('请选择要取消收藏的论文', 'warning');
+        return;
+    }
+
+    if (!confirm(`确定要取消收藏选中的 ${paperIds.length} 篇论文吗？`)) {
+        return;
+    }
+
+    const btn = document.getElementById('batchUnfavBtnFav');
+    const originalText = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> 处理中...';
+
+    try {
+        const response = await fetch('/api/batch/unfavorite', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({paper_ids: paperIds})
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            showToast(data.message, 'success');
+            // 从界面上移除
+            paperIds.forEach(id => {
+                const card = document.querySelector(`.paper-card[data-id="${id}"]`);
+                if (card) {
+                    card.style.opacity = '0.5';
+                    card.style.pointerEvents = 'none';
+                }
+            });
+            setTimeout(() => location.reload(), 500);
+        } else {
+            showToast(data.message, 'error');
+        }
+    } catch (err) {
+        console.error('操作失败:', err);
+        showToast('操作失败，请稍后重试', 'error');
+    } finally {
+        btn.innerHTML = originalText;
+        btn.disabled = false;
+    }
+}
+
+function confirmBatchDeleteFav() {
+    const paperIds = getSelectedPaperIdsFav();
+
+    if (paperIds.length === 0) {
+        showToast('请选择要删除的论文', 'warning');
+        return;
+    }
+
+    if (!confirm(`⚠️ 确定要删除选中的 ${paperIds.length} 篇论文吗？\n\n此操作不可恢复！`)) {
+        return;
+    }
+
+    batchDelete(paperIds);
+}
+
+async function singleUnfavorite(paperId) {
+    if (!confirm('确定要取消收藏这篇论文吗？')) {
+        return;
+    }
+
+    try {
+        const response = await fetch('/api/batch/unfavorite', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({paper_ids: [paperId]})
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            showToast(data.message, 'success');
+            const card = document.querySelector(`.paper-card[data-id="${paperId}"]`);
+            if (card) {
+                card.style.opacity = '0.5';
+                card.style.pointerEvents = 'none';
+            }
+            setTimeout(() => location.reload(), 500);
+        } else {
+            showToast(data.message, 'error');
+        }
+    } catch (err) {
+        console.error('操作失败:', err);
+        showToast('操作失败，请稍后重试', 'error');
+    }
+}
+</script>
+
+<!-- 翻译功能（从主页复制） -->
+<script>
+async function translateTitle(paperId) {
+    const titleEl = document.getElementById(`title-${paperId}`);
+    const originalTitle = originalTitles[paperId];
+
+    if (translations.titles[paperId]) {
+        titleEl.textContent = originalTitle;
+        delete translations.titles[paperId];
+        showToast('已切换回原文', 'info');
+        return;
+    }
+
+    const originalHTML = titleEl.innerHTML;
+    titleEl.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+
+    try {
+        const translated = await translateText(originalTitle);
+        titleEl.innerHTML = `<span class="translated-badge" title="译文">${translated}</span>`;
+        translations.titles[paperId] = translated;
+        showToast('标题翻译完成（再次点击切换回原文）', 'success');
+    } catch (err) {
+        titleEl.innerHTML = originalHTML;
+        console.error('翻译失败:', err);
+        showToast('翻译失败，请稍后重试', 'error');
+    }
+}
+
+async function translateAbstract(paperId) {
+    const abstractEl = document.getElementById(`abstract-${paperId}`);
+    const fullAbstract = abstracts[paperId];
+
+    if (!fullAbstract) {
+        showToast('该论文没有摘要', 'warning');
+        return;
+    }
+
+    if (translations.abstracts[paperId]) {
+        const isExpanded = abstractEl.dataset.expanded === 'true';
+        const displayText = isExpanded ? fullAbstract : (fullAbstract.length > 300 ? fullAbstract.substring(0, 300) + '...' : fullAbstract);
+        abstractEl.innerHTML = `<small>${displayText}</small>`;
+        abstractEl.classList.remove('translated');
+        delete translations.abstracts[paperId];
+        showToast('已切换回原文', 'info');
+        return;
+    }
+
+    const originalHTML = abstractEl.innerHTML;
+    abstractEl.innerHTML = '<small><span class="spinner-border spinner-border-sm"></span> 翻译中...</small>';
+
+    try {
+        const translated = await translateText(fullAbstract);
+        const isExpanded = abstractEl.dataset.expanded === 'true';
+        const displayText = isExpanded ? translated : (translated.length > 300 ? translated.substring(0, 300) + '...' : translated);
+        abstractEl.innerHTML = `<small>${displayText}</small>`;
+        abstractEl.classList.add('translated');
+        translations.abstracts[paperId] = translated;
+        showToast('摘要翻译完成（再次点击切换回原文）', 'success');
+    } catch (err) {
+        abstractEl.innerHTML = originalHTML;
+        console.error('翻译失败:', err);
+        showToast('翻译失败: ' + err.message, 'error');
+    }
+}
+
+async function translatePaper(paperId) {
+    const btn = document.getElementById(`translate-btn-${paperId}`);
+    const originalText = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> 翻译中...';
+
+    try {
+        if (!translations.titles[paperId]) {
+            await translateTitle(paperId);
+        }
+        if (abstracts[paperId] && !translations.abstracts[paperId]) {
+            await new Promise(resolve => setTimeout(resolve, 500));
+            await translateAbstract(paperId);
+        }
+        showToast('翻译完成', 'success');
+    } catch (err) {
+        console.error('翻译失败:', err);
+        showToast('翻译失败，请稍后重试', 'error');
+    } finally {
+        btn.innerHTML = '<i class="bi bi-translate"></i> 还原';
+        btn.onclick = () => restorePaper(paperId);
+        btn.disabled = false;
+    }
+}
+
+function restorePaper(paperId) {
+    const titleEl = document.getElementById(`title-${paperId}`);
+    const abstractEl = document.getElementById(`abstract-${paperId}`);
+    const btn = document.getElementById(`translate-btn-${paperId}`);
+
+    if (translations.titles[paperId]) {
+        titleEl.textContent = originalTitles[paperId];
+        delete translations.titles[paperId];
+    }
+
+    if (translations.abstracts[paperId] && abstracts[paperId]) {
+        const fullAbstract = abstracts[paperId];
+        const isExpanded = abstractEl.dataset.expanded === 'true';
+        const displayText = isExpanded ? fullAbstract : (fullAbstract.length > 300 ? fullAbstract.substring(0, 300) + '...' : fullAbstract);
+        abstractEl.innerHTML = `<small>${displayText}</small>`;
+        delete translations.abstracts[paperId];
+    }
+
+    btn.innerHTML = '<i class="bi bi-translate"></i> 翻译';
+    btn.onclick = () => translatePaper(paperId);
+}
+
+async function translateText(text) {
+    const MAX_LENGTH = 500;
+    const textToTranslate = text.trim();
+
+    if (textToTranslate.length <= MAX_LENGTH) {
+        return await doTranslate(textToTranslate);
+    }
+
+    const chunks = splitText(textToTranslate, MAX_LENGTH);
+    const translatedChunks = [];
+
+    for (let i = 0; i < chunks.length; i++) {
+        try {
+            const translated = await doTranslate(chunks[i]);
+            translatedChunks.push(translated);
+            if (i < chunks.length - 1) {
+                await new Promise(resolve => setTimeout(resolve, 300));
+            }
+        } catch (err) {
+            console.error(`翻译第 ${i + 1} 段失败:`, err);
+            translatedChunks.push(chunks[i]);
+        }
+    }
+
+    return translatedChunks.join('');
+}
+
+async function doTranslate(text) {
+    try {
+        const url = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=en|zh-CN`;
+        const response = await fetch(url);
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        const data = await response.json();
+        if (data.responseStatus === 200 && data.responseData && data.responseData.translatedText) {
+            return data.responseData.translatedText;
+        }
+        if (data.responseStatus === 403 || data.responseStatus === 429) {
+            return await fallbackTranslate(text);
+        }
+        throw new Error(data.responseDetails || 'API 返回错误');
+    } catch (err) {
+        console.error('翻译请求失败:', err);
+        return await fallbackTranslate(text);
+    }
+}
+
+async function fallbackTranslate(text) {
+    try {
+        const url = 'https://libretranslate.com/translate';
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                q: text,
+                source: 'en',
+                target: 'zh',
+                format: 'text'
+            })
+        });
+        if (!response.ok) {
+            throw new Error(`LibreTranslate HTTP ${response.status}`);
+        }
+        const data = await response.json();
+        return data.translatedText;
+    } catch (err) {
+        console.error('备用翻译也失败:', err);
+        throw new Error('翻译服务暂时不可用，请稍后重试');
+    }
+}
+
+function splitText(text, maxLength) {
+    const chunks = [];
+    const sentences = text.split(/(?<=[.!?。！？])\s+/);
+    let currentChunk = '';
+
+    for (const sentence of sentences) {
+        if ((currentChunk + sentence).length <= maxLength) {
+            currentChunk += (currentChunk ? ' ' : '') + sentence;
+        } else {
+            if (currentChunk) {
+                chunks.push(currentChunk.trim());
+            }
+            currentChunk = sentence;
+        }
+    }
+
+    if (currentChunk) {
+        chunks.push(currentChunk.trim());
+    }
+
+    return chunks;
+}
+
+function showToast(message, type = 'info') {
+    const toastContainer = document.getElementById('toast-container') || (() => {
+        const container = document.createElement('div');
+        container.id = 'toast-container';
+        container.style.cssText = 'position: fixed; top: 20px; right: 20px; z-index: 9999;';
+        document.body.appendChild(container);
+        return container;
+    })();
+
+    const bgClass = {
+        'success': 'bg-success',
+        'error': 'bg-danger',
+        'warning': 'bg-warning',
+        'info': 'bg-info'
+    }[type] || 'bg-info';
+
+    const toast = document.createElement('div');
+    toast.className = `toast align-items-center text-white ${bgClass} border-0 show`;
+    toast.innerHTML = `
+        <div class="d-flex">
+            <div class="toast-body">${message}</div>
+            <button type="button" class="btn-close btn-close-white me-2 m-auto" onclick="this.parentElement.parentElement.remove()"></button>
+        </div>
+    `;
+
+    toastContainer.appendChild(toast);
+    setTimeout(() => toast.remove(), 3000);
+}
+</script>
+
+<!-- 引用主页的批量删除功能 -->
+<script src="{{ url_for('static', filename='js/main.js') }}"></script>
+{% endblock %}

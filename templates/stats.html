@@ -1,0 +1,260 @@
+{% extends "base.html" %}
+
+{% block title %}PaperInfo - 数据统计{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <h2 class="mb-4">
+        <i class="bi bi-graph-up"></i> 数据统计
+        <a href="/" class="btn btn-outline-primary btn-sm float-end">
+            <i class="bi bi-arrow-left"></i> 返回论文列表
+        </a>
+    </h2>
+
+    <!-- 统计卡片 -->
+    <div class="row mb-4">
+        <div class="col-md-4">
+            <div class="card text-white bg-primary">
+                <div class="card-body">
+                    <h5 class="card-title"><i class="bi bi-file-text"></i> 论文总数</h5>
+                    <h2 class="card-text" id="totalPapers">-</h2>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card text-white bg-success">
+                <div class="card-body">
+                    <h5 class="card-title"><i class="bi bi-folder"></i> 研究领域</h5>
+                    <h2 class="card-text" id="totalDomains">-</h2>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card text-white bg-info">
+                <div class="card-body">
+                    <h5 class="card-title"><i class="bi bi-database"></i> 数据源</h5>
+                    <h4 class="card-text mt-2">
+                        <span class="badge bg-light text-dark">arXiv: <span id="arxivCount">-</span></span>
+                        <span class="badge bg-light text-dark ms-2">DBLP: <span id="dblpCount">-</span></span>
+                    </h4>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 图表区域 -->
+    <div class="row mb-4">
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header">
+                    <h6 class="mb-0"><i class="bi bi-pie-chart"></i> 数据源分布</h6>
+                </div>
+                <div class="card-body">
+                    <div style="height: 250px; display: flex; justify-content: center;">
+                        <canvas id="sourceChart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header">
+                    <h6 class="mb-0"><i class="bi bi-bar-chart"></i> 年份分布</h6>
+                </div>
+                <div class="card-body">
+                    <canvas id="yearChart"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 最近论文 -->
+    <div class="row">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header">
+                    <h6 class="mb-0"><i class="bi bi-clock-history"></i> 最近抓取的论文</h6>
+                </div>
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table class="table table-hover">
+                            <thead>
+                                <tr>
+                                    <th>标题</th>
+                                    <th>来源</th>
+                                    <th>年份</th>
+                                    <th>发布日期</th>
+                                    <th>操作</th>
+                                </tr>
+                            </thead>
+                            <tbody id="recentPapersTable">
+                                <tr>
+                                    <td colspan="5" class="text-center">加载中...</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script>
+let sourceChart, yearChart;
+
+// 加载统计数据
+async function loadStats() {
+    try {
+        const response = await fetch('/api/stats');
+        const data = await response.json();
+
+        // 更新统计卡片
+        document.getElementById('totalPapers').textContent = data.total_papers;
+        document.getElementById('totalDomains').textContent = data.total_domains;
+        document.getElementById('arxivCount').textContent = data.by_source.arxiv || 0;
+        document.getElementById('dblpCount').textContent = data.by_source.dblp || 0;
+
+        // 绘制数据源饼图
+        drawSourceChart(data.by_source);
+
+        // 绘制年份柱状图
+        drawYearChart(data.by_year);
+
+        // 更新最近论文表格
+        updateRecentPapers(data.recent_papers);
+
+    } catch (error) {
+        console.error('加载统计数据失败:', error);
+        showAlert('加载统计数据失败', 'danger');
+    }
+}
+
+// 绘制数据源饼图
+function drawSourceChart(sourceData) {
+    const ctx = document.getElementById('sourceChart').getContext('2d');
+
+    if (sourceChart) {
+        sourceChart.destroy();
+    }
+
+    const labels = [];
+    const data = [];
+    const colors = ['#0d6efd', '#dc3545', '#198754', '#ffc107', '#0dcaf0'];
+
+    for (const [source, count] of Object.entries(sourceData)) {
+        labels.push(source.toUpperCase());
+        data.push(count);
+    }
+
+    sourceChart = new Chart(ctx, {
+        type: 'doughnut',
+        data: {
+            labels: labels,
+            datasets: [{
+                data: data,
+                backgroundColor: colors.slice(0, labels.length),
+                borderWidth: 2,
+                borderColor: '#fff'
+            }]
+        },
+        options: {
+            responsive: true,
+            plugins: {
+                legend: {
+                    position: 'bottom'
+                }
+            }
+        }
+    });
+}
+
+// 绘制年份柱状图
+function drawYearChart(yearData) {
+    const ctx = document.getElementById('yearChart').getContext('2d');
+
+    if (yearChart) {
+        yearChart.destroy();
+    }
+
+    // 按年份排序
+    const sortedYears = Object.keys(yearData).sort().reverse();
+    const data = sortedYears.map(year => yearData[year]);
+
+    yearChart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: sortedYears,
+            datasets: [{
+                label: '论文数量',
+                data: data,
+                backgroundColor: '#0d6efd',
+                borderColor: '#0a58ca',
+                borderWidth: 1
+            }]
+        },
+        options: {
+            responsive: true,
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    ticks: {
+                        stepSize: 1
+                    }
+                }
+            },
+            plugins: {
+                legend: {
+                    display: false
+                }
+            }
+        }
+    });
+}
+
+// 更新最近论文表格
+function updateRecentPapers(papers) {
+    const tbody = document.getElementById('recentPapersTable');
+
+    if (!papers || papers.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="5" class="text-center">暂无论文</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = papers.map(paper => `
+        <tr>
+            <td>
+                <a href="${paper.url || '#'}" target="_blank" class="text-decoration-none">
+                    ${paper.title.length > 80 ? paper.title.substring(0, 80) + '...' : paper.title}
+                </a>
+            </td>
+            <td><span class="badge bg-primary">${paper.source}</span></td>
+            <td>${paper.year || 'N/A'}</td>
+            <td>${paper.published_date ? formatDate(paper.published_date) : 'N/A'}</td>
+            <td>
+                ${paper.url ? `<a href="${paper.url}" target="_blank" class="btn btn-sm btn-outline-primary">查看</a>` : ''}
+                ${paper.pdf_url ? `<a href="${paper.pdf_url}" target="_blank" class="btn btn-sm btn-outline-danger">PDF</a>` : ''}
+            </td>
+        </tr>
+    `).join('');
+}
+
+// 格式化日期
+function formatDate(dateString) {
+    const date = new Date(dateString);
+    return date.toLocaleDateString('zh-CN');
+}
+
+// 显示提示消息
+function showAlert(message, type = 'info') {
+    // 简单提示实现
+    alert(message);
+}
+
+// 页面加载时获取数据
+document.addEventListener('DOMContentLoaded', loadStats);
+</script>
+{% endblock %}
