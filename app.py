@@ -549,6 +549,8 @@ def register_routes(app):
                         for i, paper in enumerate(papers, 1)
                     }
 
+                    logger.info(f"已提交 {len(futures)} 个评估任务")
+
                     # 收集完成的任务并按顺序发送进度
                     completed_indices = set()
                     total_completed = 0
@@ -561,6 +563,8 @@ def register_routes(app):
                             total_completed += 1
 
                             if result.get('filtered'):
+                                filtered_count += 1
+                                logger.debug(f"论文被过滤: {result.get('title')} (相关度: {result.get('relevance')}, 阈值: {Config.LLM_FILTER_THRESHOLD})")
                                 data = f"data: {json.dumps({
                                     'type': 'progress',
                                     'current': total_completed,
@@ -607,6 +611,7 @@ def register_routes(app):
                 # 记录重新评分操作到更新日志
                 try:
                     from scheduler import _create_update_log
+                    logger.info(f"重新评分完成: 总计={total}, 成功={success_count}, 失败={failed_count}, 被过滤={filtered_count}")
                     _create_update_log(
                         trigger_type='rescore',
                         domain_ids=[domain_id],
