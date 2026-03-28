@@ -21,8 +21,13 @@ class Config:
 
     # 爬虫配置
     ARXIV_DELAY = 3                 # arXiv API 请求间隔（秒），官方要求至少3秒
-    MAX_PAPERS_PER_SOURCE = 100     # 每个数据源最大抓取论文数
+    MAX_PAPERS_PER_SOURCE = 300     # 每个数据源最大抓取论文数（提高到300以支持分批查询）
     REQUEST_TIMEOUT = 30            # 请求超时时间（秒）
+
+    # 时间范围配置
+    FETCH_DAYS_BACK = 30            # 首次运行获取最近 N 天的论文
+    INCREMENTAL_UPDATE = True       # 是否启用增量更新（只抓取上次更新后的新论文）
+    ENABLE_TIME_FILTER = True       # 是否启用时间过滤
 
     # API 端点
     ARXIV_API_URL = 'http://export.arxiv.org/api/query'
@@ -53,17 +58,14 @@ class Config:
                 'smart contract security', 'reentrancy', 'flash loan attack',
                 '51% attack', 'double spending', 'selfish mining'
             ],
-            # arXiv 分类：密码学、分布式计算、博弈论、计算金融、数据库、AI/ML（区块链结合）
+            # arXiv 分类：密码学、分布式计算、博弈论、计算金融
             'arxiv_categories': [
                 'cs.CR',      # Cryptography and Security
                 'cs.DC',      # Distributed, Parallel, and Cluster Computing
-                'cs.Distributed',  # Distributed Computing
                 'cs.GT',      # Computer Science and Game Theory
                 'cs.CE',      # Computational Engineering, Finance, and Science
-                'cs.DB',      # Databases
-                'cs.AI',      # Artificial Intelligence
-                'cs.LG',      # Machine Learning
-                'cs.DL'       # Digital Libraries
+                'cs.SC',      # Symbolic Computation
+                'cs.IT'       # Information Theory
             ],
             # CCF-A 类会议/期刊：安全、软工、AI、网络、分布式（不含密码学）
             'ccf_venues': [

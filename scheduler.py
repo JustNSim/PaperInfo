@@ -3,7 +3,7 @@ PaperInfo 定时任务配置
 使用 APScheduler 实现定时抓取论文
 """
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.executors.pool import ThreadPoolExecutor
@@ -25,6 +25,36 @@ logger = logging.getLogger(__name__)
 
 # 全局调度器实例
 scheduler = None
+
+
+def _get_fetch_date_range():
+    """
+    获取抓取的时间范围
+
+    Returns:
+        (from_date, to_date) 元组，可能包含 None
+    """
+    from_date = None
+    to_date = datetime.utcnow()
+
+    if Config.INCREMENTAL_UPDATE:
+        # 尝试获取上次更新时间
+        try:
+            last_log = UpdateLog.query.filter_by(status='success').order_by(
+                UpdateLog.trigger_time.desc()
+            ).first()
+            if last_log:
+                from_date = last_log.trigger_time
+                logger.info(f"增量更新：从 {from_date.strftime('%Y-%m-%d %H:%M')} 开始")
+        except Exception as e:
+            logger.warning(f"获取上次更新时间失败: {e}，将使用默认范围")
+
+    # 如果没有上次更新时间，使用配置的天数
+    if not from_date and Config.FETCH_DAYS_BACK:
+        from_date = to_date - timedelta(days=Config.FETCH_DAYS_BACK)
+        logger.info(f"使用默认时间范围：最近 {Config.FETCH_DAYS_BACK} 天")
+
+    return from_date, to_date
 
 
 def fetch_papers_for_domain(domain: Domain) -> dict:
@@ -49,6 +79,11 @@ def fetch_papers_for_domain(domain: Domain) -> dict:
         'source_stats': {}
     }
 
+    # 获取时间范围
+    from_date, to_date = None, None
+    if Config.ENABLE_TIME_FILTER:
+        from_date, to_date = _get_fetch_date_range()
+
     try:
         # 1. 从 arXiv 抓取
         if domain.arxiv_categories:
@@ -60,7 +95,9 @@ def fetch_papers_for_domain(domain: Domain) -> dict:
             )
             arxiv_papers = arxiv_crawler.search(
                 keywords=domain.keywords,
-                categories=domain.arxiv_categories
+                categories=domain.arxiv_categories,
+                from_date=from_date,
+                to_date=to_date
             )
             arxiv_count = _save_papers(arxiv_papers, domain)
             result['new_count'] += arxiv_count
@@ -73,7 +110,11 @@ def fetch_papers_for_domain(domain: Domain) -> dict:
                 timeout=Config.REQUEST_TIMEOUT,
                 max_results=Config.MAX_PAPERS_PER_SOURCE
             )
-            arxiv_papers = arxiv_crawler.search(keywords=domain.keywords)
+            arxiv_papers = arxiv_crawler.search(
+                keywords=domain.keywords,
+                from_date=from_date,
+                to_date=to_date
+            )
             arxiv_count = _save_papers(arxiv_papers, domain)
             result['new_count'] += arxiv_count
             result['source_stats']['arxiv'] = arxiv_count
@@ -81,6 +122,11 @@ def fetch_papers_for_domain(domain: Domain) -> dict:
         # 2. 从 DBLP 抓取
         if domain.ccf_venues:
             logger.info(f"从 DBLP 抓取 {domain.name} 论文...")
+
+            # 计算年份范围
+            from_year = from_date.year if from_date else None
+            to_year = to_date.year if to_date else None
+
             dblp_crawler = DBLPCrawler(
                 delay=Config.ARXIV_DELAY,
                 timeout=Config.REQUEST_TIMEOUT,
@@ -88,7 +134,9 @@ def fetch_papers_for_domain(domain: Domain) -> dict:
             )
             dblp_papers = dblp_crawler.search(
                 keywords=domain.keywords,
-                venues=domain.ccf_venues
+                venues=domain.ccf_venues,
+                from_year=from_year,
+                to_year=to_year
             )
             dblp_count = _save_papers(dblp_papers, domain)
             result['new_count'] += dblp_count
