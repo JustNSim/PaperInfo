@@ -253,12 +253,37 @@ def register_routes(app):
 
     @app.route('/api/domains/<int:domain_id>', methods=['DELETE'])
     def api_delete_domain(domain_id):
-        """API: 删除领域"""
+        """API: 删除领域（包括所有论文）"""
         domain = Domain.query.get_or_404(domain_id)
         try:
+            # 统计论文数量
+            paper_count = Paper.query.filter_by(domain_id=domain_id).count()
+            domain_name = domain.name
+
+            # 删除领域（会级联删除所有论文）
             db.session.delete(domain)
             db.session.commit()
-            return jsonify({'success': True, 'message': '领域已删除'})
+
+            # 记录删除操作到更新日志
+            try:
+                from scheduler import _create_update_log
+                _create_update_log(
+                    trigger_type='delete_domain',
+                    domain_ids=[domain_id],
+                    status='success',
+                    operation_details={
+                        'domain_name': domain_name,
+                        'delete_papers': True
+                    },
+                    papers_affected=paper_count
+                )
+            except Exception as log_error:
+                logger.error(f"记录删除领域日志失败: {log_error}")
+
+            return jsonify({
+                'success': True,
+                'message': f'领域及 {paper_count} 篇论文已删除'
+            })
         except Exception as e:
             db.session.rollback()
             return jsonify({'success': False, 'message': str(e)}), 500
@@ -465,6 +490,23 @@ def register_routes(app):
                 # 提交更改
                 db.session.commit()
 
+                # 记录重新评分操作到更新日志
+                try:
+                    from scheduler import _create_update_log
+                    _create_update_log(
+                        trigger_type='rescore',
+                        domain_ids=[domain_id],
+                        status='success' if failed_count == 0 else 'partial',
+                        operation_details={
+                            'domain_name': domain.name,
+                            'success_count': success_count,
+                            'failed_count': failed_count
+                        },
+                        papers_affected=success_count
+                    )
+                except Exception as log_error:
+                    logger.error(f"记录重新评分日志失败: {log_error}")
+
                 # 发送完成事件
                 data = f"data: {json.dumps({
                     'type': 'complete',
@@ -496,6 +538,7 @@ def register_routes(app):
         try:
             # 获取该领域的论文数量
             paper_count = Paper.query.filter_by(domain_id=domain_id).count()
+            domain_name = domain.name
 
             # 取消论文与领域的关联
             # 注意：我们需要设置domain_id为某个存在的领域ID，或者让该字段允许NULL
@@ -520,6 +563,23 @@ def register_routes(app):
             # 删除领域
             db.session.delete(domain)
             db.session.commit()
+
+            # 记录删除操作到更新日志
+            try:
+                from scheduler import _create_update_log
+                _create_update_log(
+                    trigger_type='delete_domain',
+                    domain_ids=[domain_id],
+                    status='success',
+                    operation_details={
+                        'domain_name': domain_name,
+                        'delete_papers': False,
+                        'moved_to_uncategorized': True
+                    },
+                    papers_affected=paper_count
+                )
+            except Exception as log_error:
+                logger.error(f"记录删除领域日志失败: {log_error}")
 
             return jsonify({
                 'success': True,

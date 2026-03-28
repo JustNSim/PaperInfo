@@ -47,7 +47,7 @@ class UpdateLog(db.Model):
     __tablename__ = 'update_logs'
 
     id = db.Column(db.Integer, primary_key=True)
-    trigger_type = db.Column(db.String(20), nullable=False)  # 'scheduled' 或 'manual'
+    trigger_type = db.Column(db.String(20), nullable=False)  # 'scheduled', 'manual', 'rescore', 'delete_domain'
     trigger_time = db.Column(db.DateTime, default=datetime.utcnow, index=True)
 
     # 更新结果统计
@@ -66,8 +66,12 @@ class UpdateLog(db.Model):
     status = db.Column(db.String(20), default='success')  # 'success', 'failed', 'partial'
     error_message = db.Column(db.Text)  # 错误信息
 
+    # 扩展字段（用于不同类型的操作）
+    operation_details = db.Column(db.JSON, default=dict)  # 存储操作的额外详情
+    papers_affected = db.Column(db.Integer, default=0)  # 受影响的论文数（用于rescore、delete等）
+
     def __repr__(self):
-        return f'<UpdateLog {self.trigger_time} - {self.status}>'
+        return f'<UpdateLog {self.trigger_time} - {self.trigger_type} - {self.status}>'
 
     def to_dict(self):
         """转换为字典格式"""
@@ -82,7 +86,9 @@ class UpdateLog(db.Model):
             'source_stats': self.source_stats,
             'domains_processed': self.domains_processed,
             'status': self.status,
-            'error_message': self.error_message
+            'error_message': self.error_message,
+            'operation_details': self.operation_details,
+            'papers_affected': self.papers_affected
         }
 
 

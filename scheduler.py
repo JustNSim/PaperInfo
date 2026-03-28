@@ -524,21 +524,30 @@ def _commit_batch(batch: list) -> int:
         return 0
 
 
-def _create_update_log(trigger_type: str, total_new: int, source_stats: dict,
-                       domain_ids: list, status: str = 'success', error_message: str = None,
-                       llm_filtered: int = 0):
+def _create_update_log(trigger_type: str, total_new: int = 0, source_stats: dict = None,
+                       domain_ids: list = None, status: str = 'success', error_message: str = None,
+                       llm_filtered: int = 0, operation_details: dict = None, papers_affected: int = 0):
     """
     创建更新日志记录
 
     Args:
-        trigger_type: 触发类型 ('scheduled' 或 'manual')
+        trigger_type: 触发类型 ('scheduled', 'manual', 'rescore', 'delete_domain')
         total_new: 新增论文总数
         source_stats: 来源统计 {'arxiv': 10, 'dblp': 5}
         domain_ids: 处理的领域 ID 列表
         status: 状态 ('success', 'failed', 'partial')
         error_message: 错误信息（可选）
         llm_filtered: LLM 过滤的论文数（可选）
+        operation_details: 操作详情（可选）
+        papers_affected: 受影响的论文数（用于rescore、delete等）
     """
+    if source_stats is None:
+        source_stats = {}
+    if domain_ids is None:
+        domain_ids = []
+    if operation_details is None:
+        operation_details = {}
+
     try:
         log = UpdateLog(
             trigger_type=trigger_type,
@@ -549,13 +558,25 @@ def _create_update_log(trigger_type: str, total_new: int, source_stats: dict,
             source_stats=source_stats,
             domains_processed=domain_ids,
             status=status,
-            error_message=error_message
+            error_message=error_message,
+            operation_details=operation_details,
+            papers_affected=papers_affected
         )
         db.session.add(log)
         db.session.commit()
-        log_msg = f"更新日志已记录: {trigger_type} - 新增 {total_new} 篇论文"
-        if Config.LLM_FILTER_ENABLED and llm_filtered > 0:
-            log_msg += f" (LLM 过滤 {llm_filtered} 篇)"
+
+        # 根据不同类型生成不同的日志消息
+        if trigger_type in ['scheduled', 'manual']:
+            log_msg = f"更新日志已记录: {trigger_type} - 新增 {total_new} 篇论文"
+            if Config.LLM_FILTER_ENABLED and llm_filtered > 0:
+                log_msg += f" (LLM 过滤 {llm_filtered} 篇)"
+        elif trigger_type == 'rescore':
+            log_msg = f"重新评分日志已记录: 领域 {domain_ids}, 成功 {papers_affected} 篇"
+        elif trigger_type == 'delete_domain':
+            log_msg = f"删除领域日志已记录: 领域 {domain_ids}, 影响论文 {papers_affected} 篇"
+        else:
+            log_msg = f"操作日志已记录: {trigger_type}"
+
         logger.info(log_msg)
     except Exception as e:
         logger.error(f"记录更新日志失败: {e}")
