@@ -22,7 +22,7 @@ class DBLPCrawler(BaseCrawler):
 
     def search(self, keywords: List[str], venues: List[str] = None, **kwargs) -> List[Dict[str, Any]]:
         """
-        搜索 DBLP 论文
+        搜索 DBLP 论文（优化版：组合查询一次请求）
 
         Args:
             keywords: 搜索关键词列表
@@ -32,50 +32,49 @@ class DBLPCrawler(BaseCrawler):
         Returns:
             论文信息列表
         """
-        all_papers = []
+        self._wait_for_rate_limit()
 
-        # 对每个关键词进行搜索
-        for keyword in keywords:
-            self._wait_for_rate_limit()
+        try:
+            # 构建组合查询：关键词1 OR 关键词2 OR ...
+            # 使用 DBLP 的 OR 语法
+            query = ' OR '.join([f'"{kw}"' for kw in keywords])
 
-            try:
-                # 构建查询
-                query = keyword
-                params = {
-                    'q': query,
-                    'format': 'json',
-                    'h': self.max_results // len(keywords),  # 每个关键词的结果数
-                    'c': 0  # 从第一条开始
-                }
+            params = {
+                'q': query,
+                'format': 'json',
+                'h': self.max_results,  # 一次请求获取最大结果数
+                'c': 0  # 从第一条开始
+            }
 
-                logger.info(f"DBLP 搜索查询: {query}")
+            logger.info(f"DBLP 组合搜索查询: {query[:200]}...")  # 截断日志避免过长
 
-                response = requests.get(
-                    self.DBLP_API_URL,
-                    params=params,
-                    timeout=self.timeout
-                )
-                response.raise_for_status()
+            response = requests.get(
+                self.DBLP_API_URL,
+                params=params,
+                timeout=self.timeout
+            )
+            response.raise_for_status()
 
-                data = response.json()
+            data = response.json()
 
-                # 解析结果
-                if 'result' in data and 'hits' in data['result']:
-                    hits = data['result']['hits']['hit']
-                    if not isinstance(hits, list):
-                        hits = [hits]
+            # 解析结果
+            all_papers = []
+            if 'result' in data and 'hits' in data['result']:
+                hits = data['result']['hits']['hit']
+                if not isinstance(hits, list):
+                    hits = [hits]
 
-                    for hit in hits:
-                        paper = self._parse_entry(hit, venues)
-                        if paper:
-                            all_papers.append(paper)
+                for hit in hits:
+                    paper = self._parse_entry(hit, venues)
+                    if paper:
+                        all_papers.append(paper)
 
-            except requests.RequestException as e:
-                logger.error(f"DBLP API 请求失败: {e}")
-                continue
+            logger.info(f"从 DBLP 获取到 {len(all_papers)} 篇论文")
+            return all_papers
 
-        logger.info(f"从 DBLP 获取到 {len(all_papers)} 篇论文")
-        return all_papers
+        except requests.RequestException as e:
+            logger.error(f"DBLP API 请求失败: {e}")
+            return []
 
     def _parse_entry(self, hit: Dict, venues: List[str] = None) -> Dict[str, Any]:
         """解析单个论文条目"""
