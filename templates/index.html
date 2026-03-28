@@ -102,6 +102,12 @@
                     <a href="?{% if request.args %}{% for k, v in request.args.items() %}{% if k != 'sort' %}{{ k }}={{ v }}&{% endif %}{% endfor %}{% endif %}sort=title" class="btn btn-outline-secondary">
                         <i class="bi bi-sort-alpha-down"></i> 标题
                     </a>
+                    <button class="btn btn-outline-success" onclick="exportToBibTeX()" title="导出为 BibTeX 格式">
+                        <i class="bi bi-file-earmark-code"></i> BibTeX
+                    </button>
+                    <button class="btn btn-outline-primary" onclick="exportToCSV()" title="导出为 CSV 格式">
+                        <i class="bi bi-filetype-csv"></i> CSV
+                    </button>
                 </div>
             </div>
             <!-- 批量操作栏 -->

@@ -17,6 +17,8 @@ class ArxivCrawler(BaseCrawler):
     """arXiv API 爬虫"""
 
     ARXIV_API_URL = 'http://export.arxiv.org/api/query'
+    # 限制关键词数量以提高查询精度
+    MAX_KEYWORDS = 10
 
     def __init__(self, delay: float = 3.0, timeout: int = 30, max_results: int = 100):
         super().__init__(delay=delay, timeout=timeout)
@@ -36,8 +38,13 @@ class ArxivCrawler(BaseCrawler):
         """
         max_results = kwargs.get('max_results', self.max_results)
 
+        # 限制关键词数量以提高查询精度（取前 MAX_KEYWORDS 个最重要的关键词）
+        effective_keywords = keywords[:self.MAX_KEYWORDS] if len(keywords) > self.MAX_KEYWORDS else keywords
+        if len(keywords) > self.MAX_KEYWORDS:
+            logger.info(f"关键词数量超过限制，使用前 {self.MAX_KEYWORDS} 个关键词（共 {len(keywords)} 个）")
+
         # 构建查询字符串
-        keyword_query = ' OR '.join([f'all:"{kw}"' for kw in keywords])
+        keyword_query = ' OR '.join([f'all:"{kw}"' for kw in effective_keywords])
 
         if categories:
             # 使用 AND 逻辑：论文必须包含关键词 AND 属于指定分类

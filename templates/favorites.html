@@ -12,6 +12,14 @@
         <a href="/" class="btn btn-outline-primary">
             <i class="bi bi-arrow-left"></i> 返回论文列表
         </a>
+        <div class="btn-group btn-group-sm">
+            <button class="btn btn-outline-success" onclick="exportToBibTeX()" title="导出为 BibTeX 格式">
+                <i class="bi bi-file-earmark-code"></i> BibTeX
+            </button>
+            <button class="btn btn-outline-primary" onclick="exportToCSV()" title="导出为 CSV 格式">
+                <i class="bi bi-filetype-csv"></i> CSV
+            </button>
+        </div>
     </div>
 
     <!-- 批量操作 -->

@@ -161,6 +161,72 @@ function exportToCSV() {
 }
 
 /**
+ * 导出论文列表为 BibTeX 格式
+ */
+function exportToBibTeX() {
+    const papers = [];
+    $('.paper-card').each(function() {
+        const $card = $(this);
+        const title = $card.find('.card-title').text().trim();
+        const authors = $card.find('.text-muted').text().replace(/^[^\u4e00-\u9fa5]*/, '').trim();
+        const source = $card.find('.badge').first().text().trim();
+        const year = $card.find('.badge.bg-info').text().trim();
+        const venue = $card.find('.badge.bg-secondary').text().trim() || '';
+        const url = $card.find('a[href]').first().attr('href');
+
+        // 生成 BibTeX key (作者姓氏 + 年份 + 标题首词)
+        const firstAuthor = authors.split(',')[0].trim() || 'Unknown';
+        const yearNum = year || 'n.d.';
+        const titleWords = title.split(/\s+/);
+        const titleWord = titleWords[0] || 'Paper';
+        const bibKey = `${firstAuthor}${yearNum}${titleWord}`.replace(/[^a-zA-Z0-9]/g, '');
+
+        papers.push({
+            key: bibKey,
+            title: title,
+            authors: authors,
+            year: year,
+            venue: venue,
+            url: url,
+            source: source
+        });
+    });
+
+    if (papers.length === 0) {
+        showToast('没有可导出的论文', 'warning');
+        return;
+    }
+
+    // 生成 BibTeX 内容
+    let bibtexContent = '';
+    papers.forEach(p => {
+        const type = p.source === 'arxiv' ? 'article' : 'inproceedings';
+        bibtexContent += `@${type}{${p.key},\n`;
+        bibtexContent += `  title={${p.title}},\n`;
+        bibtexContent += `  author={${p.authors}},\n`;
+        if (p.year && p.year !== 'N/A') {
+            bibtexContent += `  year={${p.year}},\n`;
+        }
+        if (p.venue) {
+            bibtexContent += `  booktitle={${p.venue}},\n`;
+        }
+        if (p.url) {
+            bibtexContent += `  url={${p.url}},\n`;
+        }
+        bibtexContent += `}\n\n`;
+    });
+
+    // 下载文件
+    const blob = new Blob([bibtexContent], { type: 'text/plain;charset=utf-8' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = `papers_${new Date().toISOString().split('T')[0]}.bib`;
+    link.click();
+
+    showToast('BibTeX 文件已下载', 'success');
+}
+
+/**
  * 格式化日期
  */
 function formatDate(dateString) {
@@ -359,3 +425,155 @@ function saveTranslationsToStorage(translations, titlesKey, abstractsKey) {
         console.error('保存翻译结果失败:', err);
     }
 }
+
+// ============== 搜索历史记录功能 ==============
+
+const SEARCH_HISTORY_KEY = 'paperinfo_search_history';
+const MAX_HISTORY_ITEMS = 10;
+
+/**
+ * 加载搜索历史记录
+ */
+function loadSearchHistory() {
+    try {
+        const history = localStorage.getItem(SEARCH_HISTORY_KEY);
+        return history ? JSON.parse(history) : [];
+    } catch (err) {
+        console.error('加载搜索历史失败:', err);
+        return [];
+    }
+}
+
+/**
+ * 保存搜索历史记录
+ */
+function saveSearchHistory(history) {
+    try {
+        localStorage.setItem(SEARCH_HISTORY_KEY, JSON.stringify(history));
+    } catch (err) {
+        console.error('保存搜索历史失败:', err);
+    }
+}
+
+/**
+ * 添加搜索关键词到历史记录
+ */
+function addSearchHistory(keyword) {
+    if (!keyword || keyword.trim() === '') return;
+
+    keyword = keyword.trim();
+    let history = loadSearchHistory();
+
+    // 移除重复项
+    history = history.filter(item => item !== keyword);
+
+    // 添加到开头
+    history.unshift(keyword);
+
+    // 限制数量
+    if (history.length > MAX_HISTORY_ITEMS) {
+        history = history.slice(0, MAX_HISTORY_ITEMS);
+    }
+
+    saveSearchHistory(history);
+    renderSearchHistory();
+}
+
+/**
+ * 清空搜索历史
+ */
+function clearSearchHistory() {
+    localStorage.removeItem(SEARCH_HISTORY_KEY);
+    renderSearchHistory();
+    showToast('搜索历史已清空', 'info');
+}
+
+/**
+ * 渲染搜索历史记录
+ */
+function renderSearchHistory() {
+    const history = loadSearchHistory();
+    const historyList = document.getElementById('searchHistory');
+    if (!historyList) return;
+
+    // 保留标题和分隔线
+    historyList.innerHTML = `
+        <li><h6 class="dropdown-header">搜索历史 <span id="clearHistory" style="cursor:pointer;float:right;" title="清空历史"><i class="bi bi-x-circle"></i></span></h6></li>
+        <li><hr class="dropdown-divider"></li>
+    `;
+
+    if (history.length === 0) {
+        const emptyItem = document.createElement('li');
+        emptyItem.innerHTML = '<span class="dropdown-item text-muted">暂无历史记录</span>';
+        emptyItem.style.cursor = 'default';
+        historyList.appendChild(emptyItem);
+    } else {
+        history.forEach(keyword => {
+            const item = document.createElement('li');
+            const link = document.createElement('a');
+            link.className = 'dropdown-item';
+            link.href = `/?q=${encodeURIComponent(keyword)}`;
+            link.textContent = keyword;
+            item.appendChild(link);
+            historyList.appendChild(item);
+        });
+    }
+}
+
+/**
+ * 初始化搜索历史功能
+ */
+function initSearchHistory() {
+    const searchInput = document.getElementById('searchInput');
+    const clearHistoryBtn = document.getElementById('clearHistory');
+    const searchForm = document.getElementById('searchForm');
+
+    if (!searchInput) return;
+
+    // 渲染历史记录
+    renderSearchHistory();
+
+    // 聚焦时显示历史
+    searchInput.addEventListener('focus', function() {
+        renderSearchHistory();
+    });
+
+    // 输入时过滤历史
+    searchInput.addEventListener('input', function() {
+        const keyword = this.value.toLowerCase();
+        const history = loadSearchHistory();
+        const historyList = document.getElementById('searchHistory');
+
+        if (historyList) {
+            const items = historyList.querySelectorAll('a.dropdown-item');
+            items.forEach(item => {
+                const text = item.textContent.toLowerCase();
+                item.style.display = text.includes(keyword) ? '' : 'none';
+            });
+        }
+    });
+
+    // 表单提交时保存历史
+    if (searchForm) {
+        searchForm.addEventListener('submit', function(e) {
+            const keyword = searchInput.value;
+            if (keyword) {
+                addSearchHistory(keyword);
+            }
+        });
+    }
+
+    // 清空历史
+    if (clearHistoryBtn) {
+        clearHistoryBtn.addEventListener('click', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            clearSearchHistory();
+        });
+    }
+}
+
+// 页面加载时初始化搜索历史
+$(document).ready(function() {
+    initSearchHistory();
+});
