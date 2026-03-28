@@ -112,6 +112,26 @@ class Config:
                 'CAI', 'ACM International Conference on AI',
                 'SEC', 'ACM Conference on Data and Application Security and Privacy'
             ]
+        },
+        {
+            'name': '大模型与自动化修复',
+            'keywords': [
+                'multi-agent', 'agent-based', 'autonomous agent', 'LLM agent',
+                'automated program repair', 'APR', 'vulnerability repair', 'code generation',
+                'software engineering', 'prompt engineering', 'root cause analysis'
+            ],
+            'arxiv_categories': [
+                'cs.SE',  # Software Engineering
+                'cs.AI',  # Artificial Intelligence
+                'cs.LG'   # Machine Learning
+            ],
+            'ccf_venues': [
+                # 软件工程会议 (CCF-A)
+                'ICSE', 'FSE', 'ESEC/FSE', 'ASE', 'ISSTA', 'OOPSLA',
+                'IEEE TSE', 'ACM TOSEM',
+                # AI会议 (CCF-A)
+                'AAAI', 'IJCAI', 'ICML', 'NeurIPS', 'ACL'
+            ]
         }
     ]
 
