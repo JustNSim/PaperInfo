@@ -22,7 +22,7 @@ class ArxivCrawler(BaseCrawler):
     # 每批查询获取的最大结果数
     MAX_RESULTS_PER_BATCH = 100
     # 最低相关性分数（0-100）
-    MIN_RELEVANCE_SCORE = 5  # 降低阈值，5分即可通过
+    MIN_RELEVANCE_SCORE = 15  # 必须包含核心关键词或多个关键词
 
     def __init__(self, delay: float = 3.0, timeout: int = 30, max_results: int = 100):
         super().__init__(delay=delay, timeout=timeout)
@@ -184,37 +184,60 @@ class ArxivCrawler(BaseCrawler):
         计算论文与关键词的相关性分数 (0-100)
 
         评分规则:
-        - 标题中完整匹配关键词: +20 分
-        - 标题中部分匹配关键词: +5 分
-        - 摘要中完整匹配关键词: +3 分
-        - 摘要中部分匹配关键词: +1 分
-        - 核心关键词 (blockchain, smart contract等) 加倍
+        - 必须包含核心关键词，否则直接返回 0 分
+        - 标题中完整匹配核心关键词: +30 分
+        - 标题中完整匹配其他关键词: +15 分
+        - 标题中部分匹配: +5 分
+        - 摘要匹配: +1~3 分
+        - 包含负面关键词: -50 分
         """
         score = 0
         title = paper.get('title', '').lower()
         abstract = (paper.get('abstract') or '').lower()
 
-        # 核心关键词（权重加倍）
-        core_keywords = {'blockchain', 'smart contract', 'decentralized', 'consensus',
-                        'distributed ledger', 'cryptocurrency', 'bitcoin', 'ethereum'}
+        # 核心关键词（必须包含至少一个）
+        core_keywords = {'blockchain', 'smart contract', 'cryptocurrency', 'bitcoin',
+                        'ethereum', 'solidity', 'defi', 'nft', 'dao', 'zk-snark',
+                        'zk-stark', 'merkle tree', 'byzantine', 'pbft', 'sharding',
+                        'rollup', 'sidechain', 'reentrancy', 'flash loan'}
 
+        # 负面关键词（包含这些说明论文不相关）
+        negative_keywords = {'traffic signal', 'manufacturing', 'battery', 'state of health',
+                           'forecasting', 'prediction', 'recommendation system',
+                           'social network', 'information retrieval', 'search engine'}
+
+        # 检查负面关键词（扣分）
+        for neg_kw in negative_keywords:
+            if neg_kw in title or neg_kw in abstract:
+                logger.debug(f"包含负面关键词 '{neg_kw}'，跳过: {title[:50]}")
+                return 0  # 直接返回 0 分
+
+        # 检查是否包含核心关键词
+        has_core = False
+        for core_kw in core_keywords:
+            if core_kw in title:
+                has_core = True
+                score += 30  # 核心关键词高分
+                break
+
+        # 如果没有核心关键词，检查是否有多个一般关键词
+        if not has_core:
+            keyword_count = 0
+            for kw in keywords:
+                kw_lower = kw.lower()
+                if kw_lower in title:
+                    keyword_count += 1
+                    score += 15
+            # 如果没有核心关键词，需要至少 2 个关键词匹配
+            if keyword_count < 2:
+                logger.debug(f"没有核心关键词且匹配关键词少于2个，跳过: {title[:50]}")
+                return 0
+
+        # 摘要匹配（低分）
         for kw in keywords:
             kw_lower = kw.lower()
-            is_core = kw_lower in core_keywords
-            multiplier = 2 if is_core else 1
-
-            # 标题匹配（高权重）
-            if f' {kw_lower} ' in f' {title} ':
-                score += 20 * multiplier
-            elif kw_lower in title:
-                score += 5 * multiplier
-
-            # 摘要匹配（低权重）
-            if abstract:
-                if f' {kw_lower} ' in f' {abstract} ':
-                    score += 3 * multiplier
-                elif kw_lower in abstract:
-                    score += 1 * multiplier
+            if kw_lower in abstract:
+                score += 2
 
         return score
 
