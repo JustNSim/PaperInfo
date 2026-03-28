@@ -58,12 +58,11 @@ class Config:
                 'smart contract security', 'reentrancy', 'flash loan attack',
                 '51% attack', 'double spending', 'selfish mining'
             ],
-            # arXiv 分类：密码学、分布式计算、博弈论、计算金融
+            # arXiv 分类：密码学、分布式计算、博弈论
             'arxiv_categories': [
                 'cs.CR',      # Cryptography and Security
                 'cs.DC',      # Distributed, Parallel, and Cluster Computing
                 'cs.GT',      # Computer Science and Game Theory
-                'cs.CE',      # Computational Engineering, Finance, and Science
                 'cs.SC',      # Symbolic Computation
                 'cs.IT'       # Information Theory
             ],

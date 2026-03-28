@@ -21,6 +21,8 @@ class ArxivCrawler(BaseCrawler):
     KEYWORD_BATCH_SIZE = 10
     # 每批查询获取的最大结果数
     MAX_RESULTS_PER_BATCH = 100
+    # 最低相关性分数（0-100）
+    MIN_RELEVANCE_SCORE = 10
 
     def __init__(self, delay: float = 3.0, timeout: int = 30, max_results: int = 100):
         super().__init__(delay=delay, timeout=timeout)
@@ -91,9 +93,9 @@ class ArxivCrawler(BaseCrawler):
                       max_results: int = MAX_RESULTS_PER_BATCH,
                       from_date: Optional[datetime] = None,
                       to_date: Optional[datetime] = None) -> List[Dict[str, Any]]:
-        """执行单批查询"""
-        # 构建查询字符串
-        keyword_query = ' OR '.join([f'all:"{kw}"' for kw in keywords])
+        """执行单批查询（只搜索标题，提高精确度）"""
+        # 使用 ti: 前缀只搜索标题，避免摘要中误匹配
+        keyword_query = ' OR '.join([f'ti:"{kw}"' for kw in keywords])
 
         if categories:
             # 使用 AND 逻辑：论文必须包含关键词 AND 属于指定分类
@@ -148,8 +150,15 @@ class ArxivCrawler(BaseCrawler):
                 if paper:
                     # 客户端再次验证时间过滤（更准确）
                     if self._within_date_range(paper, from_date, to_date):
-                        papers.append(paper)
+                        # 计算相关性分数并过滤
+                        score = self._calculate_relevance_score(paper, keywords)
+                        if score >= self.MIN_RELEVANCE_SCORE:
+                            paper['relevance_score'] = score
+                            papers.append(paper)
+                        else:
+                            logger.debug(f"论文相关性过低 ({score})，跳过: {paper['title'][:50]}")
 
+            logger.info(f"批次获取 {len(papers)} 篇相关性达标的论文")
             return papers
 
         except requests.RequestException as e:
@@ -169,6 +178,45 @@ class ArxivCrawler(BaseCrawler):
         if to_date and published > to_date:
             return False
         return True
+
+    def _calculate_relevance_score(self, paper: Dict[str, Any], keywords: List[str]) -> int:
+        """
+        计算论文与关键词的相关性分数 (0-100)
+
+        评分规则:
+        - 标题中完整匹配关键词: +20 分
+        - 标题中部分匹配关键词: +5 分
+        - 摘要中完整匹配关键词: +3 分
+        - 摘要中部分匹配关键词: +1 分
+        - 核心关键词 (blockchain, smart contract等) 加倍
+        """
+        score = 0
+        title = paper.get('title', '').lower()
+        abstract = (paper.get('abstract') or '').lower()
+
+        # 核心关键词（权重加倍）
+        core_keywords = {'blockchain', 'smart contract', 'decentralized', 'consensus',
+                        'distributed ledger', 'cryptocurrency', 'bitcoin', 'ethereum'}
+
+        for kw in keywords:
+            kw_lower = kw.lower()
+            is_core = kw_lower in core_keywords
+            multiplier = 2 if is_core else 1
+
+            # 标题匹配（高权重）
+            if f' {kw_lower} ' in f' {title} ':
+                score += 20 * multiplier
+            elif kw_lower in title:
+                score += 5 * multiplier
+
+            # 摘要匹配（低权重）
+            if abstract:
+                if f' {kw_lower} ' in f' {abstract} ':
+                    score += 3 * multiplier
+                elif kw_lower in abstract:
+                    score += 1 * multiplier
+
+        return score
 
     def _deduplicate_papers(self, papers: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """按 source_id 去重，保留最新的版本"""
