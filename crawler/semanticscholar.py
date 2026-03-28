@@ -16,9 +16,9 @@ class SemanticScholarCrawler(BaseCrawler):
     """Semantic Scholar API 爬虫"""
 
     S2_API_URL = 'https://api.semanticscholar.org/graph/v1'
-    # Semantic Scholar 速率限制: 每5分钟100次请求（有API key）
-    # 使用更保守的间隔：3秒一次请求，确保不超限
-    DEFAULT_DELAY = 3.0
+    # Semantic Scholar 速率限制: 每5分钟100次请求（无API key时更严格）
+    # 使用更保守的间隔：5秒一次请求，确保不超限
+    DEFAULT_DELAY = 5.0
     # 每次请求最多返回的论文数
     MAX_RESULTS_PER_REQUEST = 100
     # 最低相关性分数

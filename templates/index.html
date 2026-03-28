@@ -35,6 +35,10 @@
                         <input class="form-check-input" type="checkbox" value="dblp" id="sourceDblp" {% if 'dblp' in sources or not sources %}checked{% endif %}>
                         <label class="form-check-label" for="sourceDblp">DBLP</label>
                     </div>
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" value="s2" id="sourceS2" {% if 's2' in sources or not sources %}checked{% endif %}>
+                        <label class="form-check-label" for="sourceS2">Semantic Scholar</label>
+                    </div>
                 </div>
 
                 <!-- 年份选择 -->
@@ -330,6 +334,7 @@ function applyFilters() {
     const sources = [];
     if (document.getElementById('sourceArxiv').checked) sources.push('arxiv');
     if (document.getElementById('sourceDblp').checked) sources.push('dblp');
+    if (document.getElementById('sourceS2').checked) sources.push('s2');
     if (sources.length > 0) params.set('sources', sources.join(','));
 
     // 年份

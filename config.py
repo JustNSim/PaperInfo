@@ -20,7 +20,9 @@ class Config:
     SCHEDULE_MINUTE = 0     # 每天更新时间：分钟
 
     # 爬虫配置
-    ARXIV_DELAY = 4                 # arXiv API 请求间隔（秒），提高到5秒避免429错误
+    ARXIV_DELAY = 4                 # arXiv API 请求间隔（秒）
+    DBLP_DELAY = 3                  # DBLP API 请求间隔（秒）
+    S2_DELAY = 5                    # Semantic Scholar API 请求间隔（秒）
     MAX_PAPERS_PER_SOURCE = 300     # 每个数据源最大抓取论文数（提高到300以支持分批查询）
     REQUEST_TIMEOUT = 30            # 请求超时时间（秒）
 

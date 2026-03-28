@@ -65,13 +65,36 @@ def _get_fetch_date_range():
 
     if Config.INCREMENTAL_UPDATE:
         # 尝试获取上次更新时间
+        # 优先使用上次有新增论文的更新时间，而不是最近的空更新
         try:
+            # 查找最近一次成功且有新增论文的更新
+            last_log_with_papers = UpdateLog.query.filter(
+                UpdateLog.trigger_type.in_(['scheduled', 'manual']),
+                UpdateLog.status == 'success',
+                UpdateLog.total_new > 0
+            ).order_by(UpdateLog.trigger_time.desc()).first()
+
+            # 检查上次更新时间（即使是空更新）
             last_log = UpdateLog.query.filter_by(status='success').order_by(
                 UpdateLog.trigger_time.desc()
             ).first()
-            if last_log:
-                from_date = last_log.trigger_time
+
+            if last_log_with_papers:
+                # 有成功的历史记录，从那时起增量更新
+                from_date = last_log_with_papers.trigger_time
                 logger.info(f"增量更新：从 {from_date.strftime('%Y-%m-%d %H:%M')} 开始")
+            elif last_log:
+                # 上次更新成功但0篇论文，检查是否是最近的情况
+                time_since_last = (datetime.utcnow() - last_log.trigger_time).total_seconds()
+                if time_since_last < 3600:  # 1小时内
+                    # 上次更新刚刚发生且0篇，说明可能当天没有新论文
+                    # 使用默认范围获取历史数据
+                    logger.info(f"上次更新在 {time_since_last/60:.1f} 分钟前且无新论文，使用默认时间范围")
+                    from_date = to_date - timedelta(days=Config.FETCH_DAYS_BACK)
+                else:
+                    # 超过1小时，尝试从上次更新时间开始
+                    from_date = last_log.trigger_time
+                    logger.info(f"增量更新：从 {from_date.strftime('%Y-%m-%d %H:%M')} 开始")
         except Exception as e:
             logger.warning(f"获取上次更新时间失败: {e}，将使用默认范围")
 
@@ -154,7 +177,7 @@ def fetch_papers_for_domain(domain: Domain) -> dict:
             to_year = to_date.year if to_date else None
 
             dblp_crawler = DBLPCrawler(
-                delay=Config.ARXIV_DELAY,
+                delay=Config.DBLP_DELAY,
                 timeout=Config.REQUEST_TIMEOUT,
                 max_results=Config.MAX_PAPERS_PER_SOURCE
             )
@@ -171,7 +194,6 @@ def fetch_papers_for_domain(domain: Domain) -> dict:
         # 3. 从 Semantic Scholar 抓取
         logger.info(f"从 Semantic Scholar 抓取 {domain.name} 论文...")
         s2_crawler = SemanticScholarCrawler(
-            delay=Config.ARXIV_DELAY,
             timeout=Config.REQUEST_TIMEOUT,
             max_results=100
         )
