@@ -10,6 +10,9 @@
                 <h2><i class="bi bi-clock-history"></i> 更新日志</h2>
             </div>
 
+            <!-- 来源名称映射 -->
+            {% set source_names = {'arxiv': 'arXiv', 'dblp': 'DBLP', 's2': 'Semantic Scholar'} %}
+
             <!-- 日志列表 -->
             <div class="card">
                 <div class="card-header bg-white">
@@ -97,7 +100,7 @@
                                             {% if log.trigger_type == 'data_cleared' or log.trigger_type == 'papers_deleted' %}
                                             {% if log.source_stats.by_source %}
                                             {% for source, count in log.source_stats.by_source.items() %}
-                                            <span class="badge bg-secondary me-1">{{ source }}: {{ count }}</span>
+                                            <span class="badge bg-secondary me-1">{{ source_names.get(source, source) }}: {{ count }}</span>
                                             {% endfor %}
                                             {% else %}
                                             <span class="text-muted">-</span>
@@ -105,7 +108,7 @@
                                             {% elif log.source_stats %}
                                             {% for source, count in log.source_stats.items() %}
                                             {% if source not in ['cleared_papers', 'cleared_domains', 'deleted_papers', 'by_source', 'by_domain'] %}
-                                            <span class="badge bg-secondary me-1">{{ source }}: {{ count }}</span>
+                                            <span class="badge bg-secondary me-1">{{ source_names.get(source, source) }}: {{ count }}</span>
                                             {% endif %}
                                             {% endfor %}
                                             {% else %}

@@ -10,7 +10,7 @@ from apscheduler.executors.pool import ThreadPoolExecutor
 
 from config import Config
 from models import db, Domain, Paper, UpdateLog
-from crawler import ArxivCrawler, DBLPCrawler
+from crawler import ArxivCrawler, DBLPCrawler, SemanticScholarCrawler
 
 # 配置日志
 logging.basicConfig(
@@ -167,6 +167,23 @@ def fetch_papers_for_domain(domain: Domain) -> dict:
             dblp_count = _save_papers(dblp_papers, domain)
             result['new_count'] += dblp_count
             result['source_stats']['dblp'] = dblp_count
+
+        # 3. 从 Semantic Scholar 抓取
+        logger.info(f"从 Semantic Scholar 抓取 {domain.name} 论文...")
+        s2_crawler = SemanticScholarCrawler(
+            delay=Config.ARXIV_DELAY,
+            timeout=Config.REQUEST_TIMEOUT,
+            max_results=100
+        )
+        s2_papers = s2_crawler.search(
+            keywords=domain.keywords,
+            venues=domain.ccf_venues,
+            from_year=from_year,
+            to_year=to_year
+        )
+        s2_count = _save_papers(s2_papers, domain)
+        result['new_count'] += s2_count
+        result['source_stats']['s2'] = s2_count
 
         logger.info(f"领域 {domain.name} 抓取完成，新增 {result['new_count']} 篇论文")
 
