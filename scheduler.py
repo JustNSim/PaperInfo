@@ -95,9 +95,10 @@ def _save_papers(papers: list, domain: Domain) -> int:
     """
     保存论文到数据库（去重，批量提交）
 
-    使用批量提交模式提高容错性：
+    优化策略：
+    - 批量预查询已存在的论文（一次查询替代多次）
+    - 使用集合进行 O(1) 去重检查
     - 每 BATCH_SIZE 篇论文提交一次
-    - 如果某批提交失败，只影响该批，不影响已提交的批次
 
     Args:
         papers: 论文列表
@@ -106,19 +107,34 @@ def _save_papers(papers: list, domain: Domain) -> int:
     Returns:
         新增论文数量
     """
+    if not papers:
+        return 0
+
+    # 第一步：批量预查询已存在的论文
+    sources = set()
+    titles = set()
+    for paper_data in papers:
+        sources.add(paper_data['source'])
+        titles.add(paper_data['title'])
+
+    existing_papers = db.session.query(Paper.source, Paper.title).filter(
+        Paper.source.in_(sources),
+        Paper.title.in_(titles)
+    ).all()
+
+    # 构建已存在论文的集合，用于 O(1) 查找
+    existing_set = {(p.source, p.title) for p in existing_papers}
+    logger.info(f"预查询发现 {len(existing_set)} 篇已存在的论文")
+
+    # 第二步：处理新论文
     new_count = 0
     batch = []  # 当前批次的论文
     committed_count = 0  # 已提交的论文数
 
     for paper_data in papers:
         try:
-            # 检查是否已存在
-            exists = Paper.exists_by_source_and_title(
-                paper_data['source'],
-                paper_data['title']
-            )
-
-            if exists:
+            # 使用集合进行 O(1) 去重检查
+            if (paper_data['source'], paper_data['title']) in existing_set:
                 logger.debug(f"论文已存在，跳过: {paper_data['title'][:50]}")
                 continue
 
