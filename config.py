@@ -2,6 +2,10 @@
 PaperInfo 全局配置文件
 """
 import os
+from dotenv import load_dotenv
+
+# 加载 .env 文件中的环境变量
+load_dotenv()
 
 
 class Config:
@@ -32,12 +36,12 @@ class Config:
     ENABLE_TIME_FILTER = True       # 是否启用时间过滤
 
     # LLM 评估器配置
-    LLM_FILTER_ENABLED = True       # 是否启用 LLM 相关性过滤
-    LLM_FILTER_THRESHOLD = 75       # LLM 相关性分数阈值 (0-100)，只保存分数 >= 此值的论文
-    LLM_PROVIDER = 'openai'         # LLM 提供商: 'openai', 'anthropic', 'zhipu'
-    LLM_MODEL = None                # LLM 模型名称 (None 使用默认模型)
-    LLM_DELAY = 1.0                 # LLM API 请求间隔（秒）
-    LLM_API_KEY = None              # LLM API 密钥 (None 从环境变量读取)
+    LLM_FILTER_ENABLED = os.environ.get('LLM_FILTER_ENABLED', 'true').lower() == 'true'
+    LLM_FILTER_THRESHOLD = int(os.environ.get('LLM_FILTER_THRESHOLD', '75'))
+    LLM_PROVIDER = os.environ.get('LLM_PROVIDER', 'openai')  # LLM 提供商: 'openai', 'anthropic', 'zhipu'
+    LLM_MODEL = os.environ.get('LLM_MODEL')  # LLM 模型名称 (None 使用默认模型)
+    LLM_DELAY = float(os.environ.get('LLM_DELAY', '1.0'))  # LLM API 请求间隔（秒）
+    LLM_API_KEY = None  # LLM API 密钥 (从环境变量自动读取)
 
     # LLM 默认模型配置
     LLM_DEFAULT_MODELS = {

@@ -41,6 +41,10 @@ Thumbs.db
 # Claude
 .claude/
 
+# Environment variables (contains API keys)
+.env
+.env.local
+
 # Data
 data/*.db
 data/*.sqlite
