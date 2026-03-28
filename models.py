@@ -40,6 +40,48 @@ class Domain(db.Model):
         }
 
 
+class UpdateLog(db.Model):
+    """更新日志模型"""
+    __tablename__ = 'update_logs'
+
+    id = db.Column(db.Integer, primary_key=True)
+    trigger_type = db.Column(db.String(20), nullable=False)  # 'scheduled' 或 'manual'
+    trigger_time = db.Column(db.DateTime, default=datetime.utcnow, index=True)
+
+    # 更新结果统计
+    total_new = db.Column(db.Integer, default=0)  # 新增论文总数
+    arxiv_new = db.Column(db.Integer, default=0)  # arXiv 新增数量
+    dblp_new = db.Column(db.Integer, default=0)   # DBLP 新增数量
+
+    # 按来源统计（JSON格式存储）
+    source_stats = db.Column(db.JSON, default=dict)  # {'arxiv': 10, 'dblp': 5}
+
+    # 处理的领域
+    domains_processed = db.Column(db.JSON, default=list)  # [1, 2, 3]
+
+    # 状态
+    status = db.Column(db.String(20), default='success')  # 'success', 'failed', 'partial'
+    error_message = db.Column(db.Text)  # 错误信息
+
+    def __repr__(self):
+        return f'<UpdateLog {self.trigger_time} - {self.status}>'
+
+    def to_dict(self):
+        """转换为字典格式"""
+        return {
+            'id': self.id,
+            'trigger_type': self.trigger_type,
+            'trigger_time': self.trigger_time.isoformat() if self.trigger_time else None,
+            'total_new': self.total_new,
+            'arxiv_new': self.arxiv_new,
+            'dblp_new': self.dblp_new,
+            'source_stats': self.source_stats,
+            'domains_processed': self.domains_processed,
+            'status': self.status,
+            'error_message': self.error_message
+        }
+
+
 class Paper(db.Model):
     """论文模型"""
     __tablename__ = 'papers'

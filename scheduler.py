@@ -9,7 +9,7 @@ from apscheduler.triggers.cron import CronTrigger
 from apscheduler.executors.pool import ThreadPoolExecutor
 
 from config import Config
-from models import db, Domain, Paper
+from models import db, Domain, Paper, UpdateLog
 from crawler import ArxivCrawler, DBLPCrawler
 
 # 配置日志
@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 scheduler = None
 
 
-def fetch_papers_for_domain(domain: Domain) -> int:
+def fetch_papers_for_domain(domain: Domain) -> dict:
     """
     为指定领域抓取论文
 
@@ -35,10 +35,19 @@ def fetch_papers_for_domain(domain: Domain) -> int:
         domain: Domain 对象
 
     Returns:
-        新增论文数量
+        包含详细统计信息的字典: {
+            'domain_id': int,
+            'new_count': int,
+            'source_stats': dict
+        }
     """
     logger.info(f"开始抓取领域: {domain.name}")
-    new_count = 0
+    result = {
+        'domain_id': domain.id,
+        'domain_name': domain.name,
+        'new_count': 0,
+        'source_stats': {}
+    }
 
     try:
         # 1. 从 arXiv 抓取
@@ -53,7 +62,9 @@ def fetch_papers_for_domain(domain: Domain) -> int:
                 keywords=domain.keywords,
                 categories=domain.arxiv_categories
             )
-            new_count += _save_papers(arxiv_papers, domain)
+            arxiv_count = _save_papers(arxiv_papers, domain)
+            result['new_count'] += arxiv_count
+            result['source_stats']['arxiv'] = arxiv_count
         else:
             # 即使没有指定分类，也用关键词搜索
             logger.info(f"从 arXiv 用关键词抓取 {domain.name} 论文...")
@@ -63,7 +74,9 @@ def fetch_papers_for_domain(domain: Domain) -> int:
                 max_results=Config.MAX_PAPERS_PER_SOURCE
             )
             arxiv_papers = arxiv_crawler.search(keywords=domain.keywords)
-            new_count += _save_papers(arxiv_papers, domain)
+            arxiv_count = _save_papers(arxiv_papers, domain)
+            result['new_count'] += arxiv_count
+            result['source_stats']['arxiv'] = arxiv_count
 
         # 2. 从 DBLP 抓取
         if domain.ccf_venues:
@@ -77,14 +90,17 @@ def fetch_papers_for_domain(domain: Domain) -> int:
                 keywords=domain.keywords,
                 venues=domain.ccf_venues
             )
-            new_count += _save_papers(dblp_papers, domain)
+            dblp_count = _save_papers(dblp_papers, domain)
+            result['new_count'] += dblp_count
+            result['source_stats']['dblp'] = dblp_count
 
-        logger.info(f"领域 {domain.name} 抓取完成，新增 {new_count} 篇论文")
+        logger.info(f"领域 {domain.name} 抓取完成，新增 {result['new_count']} 篇论文")
 
     except Exception as e:
         logger.error(f"抓取领域 {domain.name} 时出错: {e}")
+        result['error'] = str(e)
 
-    return new_count
+    return result
 
 
 # 批量提交大小：每处理 BATCH_SIZE 篇论文提交一次
@@ -203,6 +219,38 @@ def _commit_batch(batch: list) -> int:
         return 0
 
 
+def _create_update_log(trigger_type: str, total_new: int, source_stats: dict,
+                       domain_ids: list, status: str = 'success', error_message: str = None):
+    """
+    创建更新日志记录
+
+    Args:
+        trigger_type: 触发类型 ('scheduled' 或 'manual')
+        total_new: 新增论文总数
+        source_stats: 来源统计 {'arxiv': 10, 'dblp': 5}
+        domain_ids: 处理的领域 ID 列表
+        status: 状态 ('success', 'failed', 'partial')
+        error_message: 错误信息（可选）
+    """
+    try:
+        log = UpdateLog(
+            trigger_type=trigger_type,
+            total_new=total_new,
+            arxiv_new=source_stats.get('arxiv', 0),
+            dblp_new=source_stats.get('dblp', 0),
+            source_stats=source_stats,
+            domains_processed=domain_ids,
+            status=status,
+            error_message=error_message
+        )
+        db.session.add(log)
+        db.session.commit()
+        logger.info(f"更新日志已记录: {trigger_type} - 新增 {total_new} 篇论文")
+    except Exception as e:
+        logger.error(f"记录更新日志失败: {e}")
+        db.session.rollback()
+
+
 def scheduled_fetch_job():
     """定时抓取任务 - 由调度器调用"""
     logger.info("=" * 50)
@@ -210,6 +258,8 @@ def scheduled_fetch_job():
     logger.info("=" * 50)
 
     total_new = 0
+    all_source_stats = {'arxiv': 0, 'dblp': 0}
+    domain_results = []
 
     try:
         # 获取所有启用的领域
@@ -222,15 +272,24 @@ def scheduled_fetch_job():
         logger.info(f"找到 {len(domains)} 个启用的领域")
 
         for domain in domains:
-            new_count = fetch_papers_for_domain(domain)
-            total_new += new_count
+            result = fetch_papers_for_domain(domain)
+            total_new += result.get('new_count', 0)
+            # 合并来源统计
+            for source, count in result.get('source_stats', {}).items():
+                all_source_stats[source] = all_source_stats.get(source, 0) + count
+            domain_results.append(result)
 
         logger.info("=" * 50)
         logger.info(f"定时抓取任务完成，共新增 {total_new} 篇论文")
         logger.info("=" * 50)
 
+        # 记录更新日志
+        _create_update_log('scheduled', total_new, all_source_stats, [d.id for d in domains], 'success')
+
     except Exception as e:
         logger.error(f"定时抓取任务出错: {e}")
+        # 记录失败日志
+        _create_update_log('scheduled', 0, {'arxiv': 0, 'dblp': 0}, [d.id for d in domains], 'failed', str(e))
 
 
 def manual_trigger_fetch(domain_id: int = None) -> dict:
@@ -249,6 +308,7 @@ def manual_trigger_fetch(domain_id: int = None) -> dict:
         'success': True,
         'new_papers': 0,
         'domains_processed': 0,
+        'source_stats': {},
         'message': ''
     }
 
@@ -266,17 +326,32 @@ def manual_trigger_fetch(domain_id: int = None) -> dict:
             result['message'] = '没有启用的领域'
             return result
 
+        domain_ids = []
         for domain in domains:
-            new_count = fetch_papers_for_domain(domain)
-            result['new_papers'] += new_count
+            domain_result = fetch_papers_for_domain(domain)
+            result['new_papers'] += domain_result.get('new_count', 0)
             result['domains_processed'] += 1
+            domain_ids.append(domain_result['domain_id'])
+            # 合并来源统计
+            for source, count in domain_result.get('source_stats', {}).items():
+                result['source_stats'][source] = result['source_stats'].get(source, 0) + count
 
         result['message'] = f'成功处理 {result["domains_processed"]} 个领域，新增 {result["new_papers"]} 篇论文'
+
+        # 记录更新日志
+        _create_update_log('manual', result['new_papers'], result['source_stats'], domain_ids, 'success')
 
     except Exception as e:
         logger.error(f"手动触发抓取失败: {e}")
         result['success'] = False
         result['message'] = f'抓取失败: {str(e)}'
+
+        # 记录失败日志
+        try:
+            domain_ids = [d.id for d in Domain.query.filter_by(enabled=True).all()]
+            _create_update_log('manual', 0, {'arxiv': 0, 'dblp': 0}, domain_ids, 'failed', str(e))
+        except:
+            pass
 
     return result
 

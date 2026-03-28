@@ -1,0 +1,203 @@
+{% extends "base.html" %}
+
+{% block title %}PaperInfo - 更新日志{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row">
+        <div class="col-12">
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <h2><i class="bi bi-clock-history"></i> 更新日志</h2>
+            </div>
+
+            <!-- 日志列表 -->
+            <div class="card">
+                <div class="card-header bg-white">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <h6 class="mb-0">历史更新记录</h6>
+                        <span class="badge bg-primary">共 {{ total }} 条记录</span>
+                    </div>
+                </div>
+                <div class="card-body p-0">
+                    {% if logs %}
+                    <div class="table-responsive">
+                        <table class="table table-hover mb-0">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>触发时间</th>
+                                    <th>触发类型</th>
+                                    <th>状态</th>
+                                    <th>新增论文</th>
+                                    <th>来源分布</th>
+                                    <th>处理的领域</th>
+                                    {% if logs[0].error_message %}
+                                    <th>错误信息</th>
+                                    {% endif %}
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for log in logs %}
+                                <tr class="{% if log.status == 'failed' %}table-danger{% elif log.status == 'partial' %}table-warning{% endif %}">
+                                    <td>
+                                        <small>{{ log.trigger_time.strftime('%Y-%m-%d %H:%M:%S') }}</small>
+                                    </td>
+                                    <td>
+                                        {% if log.trigger_type == 'scheduled' %}
+                                        <span class="badge bg-info">
+                                            <i class="bi bi-clock"></i> 定时
+                                        </span>
+                                        {% else %}
+                                        <span class="badge bg-success">
+                                            <i class="bi bi-hand-index"></i> 手动
+                                        </span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {% if log.status == 'success' %}
+                                        <span class="badge bg-success">成功</span>
+                                        {% elif log.status == 'failed' %}
+                                        <span class="badge bg-danger">失败</span>
+                                        {% elif log.status == 'partial' %}
+                                        <span class="badge bg-warning">部分成功</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        <strong class="text-primary">{{ log.total_new }}</strong> 篇
+                                    </td>
+                                    <td>
+                                        <small>
+                                            {% if log.source_stats %}
+                                            {% for source, count in log.source_stats.items() %}
+                                            <span class="badge bg-secondary me-1">{{ source }}: {{ count }}</span>
+                                            {% endfor %}
+                                            {% else %}
+                                            <span class="text-muted">无数据</span>
+                                            {% endif %}
+                                        </small>
+                                    </td>
+                                    <td>
+                                        <small>
+                                            {% if log.domains_processed %}
+                                            {% for domain_id in log.domains_processed %}
+                                            <span class="badge bg-light text-dark me-1">{{ domain_names.get(domain_id, domain_id) }}</span>
+                                            {% endfor %}
+                                            {% else %}
+                                            <span class="text-muted">无数据</span>
+                                            {% endif %}
+                                        </small>
+                                    </td>
+                                    {% if log.error_message %}
+                                    <td>
+                                        <small class="text-danger" title="{{ log.error_message }}">
+                                            {{ log.error_message[:50] }}{% if log.error_message|length > 50 %}...{% endif %}
+                                        </small>
+                                    </td>
+                                    {% endif %}
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <!-- 分页 -->
+                    {% if total_pages > 1 %}
+                    <nav aria-label="分页导航" class="p-3 border-top">
+                        <ul class="pagination justify-content-center mb-0">
+                            {% if page > 1 %}
+                            <li class="page-item">
+                                <a class="page-link" href="?page={{ page - 1 }}{{ query_string }}">上一页</a>
+                            </li>
+                            {% endif %}
+
+                            {% for p in range(1, total_pages + 1) %}
+                            {% if p == page %}
+                            <li class="page-item active">
+                                <span class="page-link">{{ p }}</span>
+                            </li>
+                            {% elif p <= 3 or p > total_pages - 3 or (p >= page - 1 and p <= page + 1) %}
+                            <li class="page-item">
+                                <a class="page-link" href="?page={{ p }}{{ query_string }}">{{ p }}</a>
+                            </li>
+                            {% elif p == 4 or p == total_pages - 3 %}
+                            <li class="page-item disabled">
+                                <span class="page-link">...</span>
+                            </li>
+                            {% endif %}
+                            {% endfor %}
+
+                            {% if page < total_pages %}
+                            <li class="page-item">
+                                <a class="page-link" href="?page={{ page + 1 }}{{ query_string }}">下一页</a>
+                            </li>
+                            {% endif %}
+                        </ul>
+                    </nav>
+                    {% endif %}
+
+                    {% else %}
+                    <div class="text-center py-5">
+                        <i class="bi bi-inbox text-muted" style="font-size: 3rem;"></i>
+                        <p class="text-muted mt-3">暂无更新记录</p>
+                        <p class="text-muted small">首次更新或点击"立即更新"后将显示记录</p>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- 统计摘要 -->
+            {% if total > 0 %}
+            <div class="row mt-4">
+                <div class="col-md-3">
+                    <div class="card text-center">
+                        <div class="card-body">
+                            <h6 class="card-subtitle mb-2 text-muted">总更新次数</h6>
+                            <h3 class="card-title text-primary">{{ total }} 次</h3>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="card text-center">
+                        <div class="card-body">
+                            <h6 class="card-subtitle mb-2 text-muted">成功</h6>
+                            <h3 class="card-title text-success">{{ logs|selectattr('status', 'equalto', 'success')|list|length }} 次</h3>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="card text-center">
+                        <div class="card-body">
+                            <h6 class="card-subtitle mb-2 text-muted">失败</h6>
+                            <h3 class="card-title text-danger">{{ logs|selectattr('status', 'equalto', 'failed')|list|length }} 次</h3>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="card text-center">
+                        <div class="card-body">
+                            <h6 class="card-subtitle mb-2 text-muted">最近更新</h6>
+                            <p class="card-text small text-muted">{{ logs[0].trigger_time.strftime('%Y-%m-%d %H:%M') }}</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// 自动刷新：如果是手动触发的更新，可以定时刷新页面查看最新状态
+// 注意：实际使用时可以根据需要调整
+$(document).ready(function() {
+    // 检查 URL 参数，如果包含 refresh=true，则 5 秒后自动刷新
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.get('refresh') === 'true') {
+        setTimeout(function() {
+            window.location.href = window.location.pathname;
+        }, 5000);
+    }
+});
+</script>
+{% endblock %}

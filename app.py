@@ -9,7 +9,7 @@ from flask import Flask, render_template, request, jsonify
 from sqlalchemy.exc import IntegrityError
 
 from config import Config, config
-from models import db, Domain, Paper
+from models import db, Domain, Paper, UpdateLog
 from scheduler import setup_scheduler, manual_trigger_fetch, get_next_run_time
 
 # 创建 Flask 应用
@@ -411,6 +411,50 @@ def register_routes(app):
                              per_page=per_page,
                              total_pages=pagination.pages,
                              query_string=query_string)
+
+    @app.route('/update-logs')
+    def update_logs():
+        """更新日志页面"""
+        page = request.args.get('page', 1, type=int)
+        per_page = 20
+
+        # 获取更新日志，按时间倒序
+        query = UpdateLog.query.order_by(UpdateLog.trigger_time.desc())
+        pagination = query.paginate(page=page, per_page=per_page, error_out=False)
+        logs = pagination.items
+
+        # 获取所有领域名称（用于显示）
+        domains = Domain.query.all()
+        domain_names = {d.id: d.name for d in domains}
+
+        # 构建查询字符串
+        query_params = {k: v for k, v in request.args.items() if k != 'page'}
+        query_string = '&' + '&'.join(f'{k}={v}' for k, v in query_params.items()) if query_params else ''
+
+        return render_template('update_logs.html',
+                             logs=logs,
+                             domain_names=domain_names,
+                             page=page,
+                             total=pagination.total,
+                             per_page=per_page,
+                             total_pages=pagination.pages,
+                             query_string=query_string)
+
+    @app.route('/api/update-logs')
+    def api_update_logs():
+        """API: 获取更新日志"""
+        page = request.args.get('page', 1, type=int)
+        per_page = request.args.get('per_page', 20, type=int)
+
+        query = UpdateLog.query.order_by(UpdateLog.trigger_time.desc())
+        pagination = query.paginate(page=page, per_page=per_page, error_out=False)
+
+        return jsonify({
+            'logs': [log.to_dict() for log in pagination.items],
+            'total': pagination.total,
+            'pages': pagination.pages,
+            'current_page': page
+        })
 
     @app.errorhandler(404)
     def not_found(e):
