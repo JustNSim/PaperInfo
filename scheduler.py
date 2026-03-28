@@ -11,6 +11,7 @@ from apscheduler.executors.pool import ThreadPoolExecutor
 from config import Config
 from models import db, Domain, Paper, UpdateLog
 from crawler import ArxivCrawler, DBLPCrawler, SemanticScholarCrawler
+from llm import LLMEvaluator, LLMEvaluatorError
 
 # 配置日志
 logging.basicConfig(
@@ -25,6 +26,43 @@ logger = logging.getLogger(__name__)
 
 # 全局调度器实例
 scheduler = None
+
+# 全局 LLM 评估器实例
+llm_evaluator = None
+
+# LLM 过滤计数器 (每次更新操作重置)
+llm_filtered_count = 0
+
+
+def _get_llm_evaluator():
+    """
+    获取或创建 LLM 评估器实例
+
+    Returns:
+        LLMEvaluator 实例（如果启用）或 None
+    """
+    global llm_evaluator
+
+    if not Config.LLM_FILTER_ENABLED:
+        return None
+
+    if llm_evaluator is None:
+        try:
+            llm_evaluator = LLMEvaluator(
+                provider=Config.LLM_PROVIDER,
+                api_key=Config.LLM_API_KEY,
+                model=Config.LLM_MODEL,
+                delay=Config.LLM_DELAY,
+                system_prompt=Config.LLM_SYSTEM_PROMPT,
+                enabled=Config.LLM_FILTER_ENABLED
+            )
+            logger.info(f"LLM 评估器已初始化: provider={Config.LLM_PROVIDER}")
+        except LLMEvaluatorError as e:
+            logger.error(f"LLM 评估器初始化失败: {e}")
+            logger.warning("LLM 过滤已禁用，将继续保存所有论文")
+            return None
+
+    return llm_evaluator
 
 
 def _get_fetch_date_range():
@@ -263,12 +301,34 @@ def _save_papers(papers: list, domain: Domain) -> int:
     batch = []  # 当前批次的论文
     committed_count = 0  # 已提交的论文数
 
+    # 获取 LLM 评估器
+    evaluator = _get_llm_evaluator()
+
     for paper_data in papers:
         try:
             # 使用集合进行 O(1) 去重检查
             if (paper_data['source'], paper_data['title']) in existing_set:
                 logger.debug(f"论文已存在，跳过: {paper_data['title'][:50]}")
                 continue
+
+            # LLM 相关性评估
+            if evaluator:
+                eval_result = evaluator.evaluate(
+                    title=paper_data.get('title', ''),
+                    abstract=paper_data.get('abstract') or ''
+                )
+
+                if eval_result.error:
+                    logger.warning(f"LLM 评估出错，跳过论文: {paper_data.get('title', '')[:50]} - {eval_result.error}")
+                    continue
+
+                if eval_result.score < Config.LLM_FILTER_THRESHOLD:
+                    logger.debug(f"LLM 评分 {eval_result.score} < {Config.LLM_FILTER_THRESHOLD}，跳过: {paper_data.get('title', '')[:50]}")
+                    global llm_filtered_count
+                    llm_filtered_count += 1
+                    continue
+
+                logger.info(f"LLM 评分 {eval_result.score} >= {Config.LLM_FILTER_THRESHOLD}，通过: {paper_data.get('title', '')[:50]}")
 
             # 创建新论文对象
             paper = Paper(
@@ -336,7 +396,8 @@ def _commit_batch(batch: list) -> int:
 
 
 def _create_update_log(trigger_type: str, total_new: int, source_stats: dict,
-                       domain_ids: list, status: str = 'success', error_message: str = None):
+                       domain_ids: list, status: str = 'success', error_message: str = None,
+                       llm_filtered: int = 0):
     """
     创建更新日志记录
 
@@ -347,6 +408,7 @@ def _create_update_log(trigger_type: str, total_new: int, source_stats: dict,
         domain_ids: 处理的领域 ID 列表
         status: 状态 ('success', 'failed', 'partial')
         error_message: 错误信息（可选）
+        llm_filtered: LLM 过滤的论文数（可选）
     """
     try:
         log = UpdateLog(
@@ -354,6 +416,7 @@ def _create_update_log(trigger_type: str, total_new: int, source_stats: dict,
             total_new=total_new,
             arxiv_new=source_stats.get('arxiv', 0),
             dblp_new=source_stats.get('dblp', 0),
+            llm_filtered=llm_filtered,
             source_stats=source_stats,
             domains_processed=domain_ids,
             status=status,
@@ -361,7 +424,10 @@ def _create_update_log(trigger_type: str, total_new: int, source_stats: dict,
         )
         db.session.add(log)
         db.session.commit()
-        logger.info(f"更新日志已记录: {trigger_type} - 新增 {total_new} 篇论文")
+        log_msg = f"更新日志已记录: {trigger_type} - 新增 {total_new} 篇论文"
+        if Config.LLM_FILTER_ENABLED and llm_filtered > 0:
+            log_msg += f" (LLM 过滤 {llm_filtered} 篇)"
+        logger.info(log_msg)
     except Exception as e:
         logger.error(f"记录更新日志失败: {e}")
         db.session.rollback()
@@ -372,6 +438,9 @@ def scheduled_fetch_job():
     logger.info("=" * 50)
     logger.info(f"开始执行定时抓取任务: {datetime.now()}")
     logger.info("=" * 50)
+
+    global llm_filtered_count
+    llm_filtered_count = 0  # 重置 LLM 过滤计数器
 
     total_new = 0
     all_source_stats = {'arxiv': 0, 'dblp': 0}
@@ -397,15 +466,17 @@ def scheduled_fetch_job():
 
         logger.info("=" * 50)
         logger.info(f"定时抓取任务完成，共新增 {total_new} 篇论文")
+        if Config.LLM_FILTER_ENABLED and llm_filtered_count > 0:
+            logger.info(f"LLM 过滤了 {llm_filtered_count} 篇不相关论文")
         logger.info("=" * 50)
 
         # 记录更新日志
-        _create_update_log('scheduled', total_new, all_source_stats, [d.id for d in domains], 'success')
+        _create_update_log('scheduled', total_new, all_source_stats, [d.id for d in domains], 'success', llm_filtered=llm_filtered_count)
 
     except Exception as e:
         logger.error(f"定时抓取任务出错: {e}")
         # 记录失败日志
-        _create_update_log('scheduled', 0, {'arxiv': 0, 'dblp': 0}, [d.id for d in domains], 'failed', str(e))
+        _create_update_log('scheduled', 0, {'arxiv': 0, 'dblp': 0}, [d.id for d in domains], 'failed', str(e), llm_filtered=0)
 
 
 def manual_trigger_fetch(domain_id: int = None) -> dict:
@@ -420,11 +491,15 @@ def manual_trigger_fetch(domain_id: int = None) -> dict:
     """
     logger.info(f"手动触发抓取，domain_id: {domain_id}")
 
+    global llm_filtered_count
+    llm_filtered_count = 0  # 重置 LLM 过滤计数器
+
     result = {
         'success': True,
         'new_papers': 0,
         'domains_processed': 0,
         'source_stats': {},
+        'llm_filtered': 0,
         'message': ''
     }
 
@@ -452,10 +527,14 @@ def manual_trigger_fetch(domain_id: int = None) -> dict:
             for source, count in domain_result.get('source_stats', {}).items():
                 result['source_stats'][source] = result['source_stats'].get(source, 0) + count
 
-        result['message'] = f'成功处理 {result["domains_processed"]} 个领域，新增 {result["new_papers"]} 篇论文'
+        result['llm_filtered'] = llm_filtered_count
+        if Config.LLM_FILTER_ENABLED and llm_filtered_count > 0:
+            result['message'] = f'成功处理 {result["domains_processed"]} 个领域，新增 {result["new_papers"]} 篇论文（LLM 过滤了 {llm_filtered_count} 篇）'
+        else:
+            result['message'] = f'成功处理 {result["domains_processed"]} 个领域，新增 {result["new_papers"]} 篇论文'
 
         # 记录更新日志
-        _create_update_log('manual', result['new_papers'], result['source_stats'], domain_ids, 'success')
+        _create_update_log('manual', result['new_papers'], result['source_stats'], domain_ids, 'success', llm_filtered=llm_filtered_count)
 
     except Exception as e:
         logger.error(f"手动触发抓取失败: {e}")
@@ -465,7 +544,7 @@ def manual_trigger_fetch(domain_id: int = None) -> dict:
         # 记录失败日志
         try:
             domain_ids = [d.id for d in Domain.query.filter_by(enabled=True).all()]
-            _create_update_log('manual', 0, {'arxiv': 0, 'dblp': 0}, domain_ids, 'failed', str(e))
+            _create_update_log('manual', 0, {'arxiv': 0, 'dblp': 0}, domain_ids, 'failed', str(e), llm_filtered=0)
         except:
             pass
 

@@ -52,6 +52,7 @@ class UpdateLog(db.Model):
     total_new = db.Column(db.Integer, default=0)  # 新增论文总数
     arxiv_new = db.Column(db.Integer, default=0)  # arXiv 新增数量
     dblp_new = db.Column(db.Integer, default=0)   # DBLP 新增数量
+    llm_filtered = db.Column(db.Integer, default=0)  # LLM 过滤掉的论文数
 
     # 按来源统计（JSON格式存储）
     source_stats = db.Column(db.JSON, default=dict)  # {'arxiv': 10, 'dblp': 5}
@@ -75,6 +76,7 @@ class UpdateLog(db.Model):
             'total_new': self.total_new,
             'arxiv_new': self.arxiv_new,
             'dblp_new': self.dblp_new,
+            'llm_filtered': self.llm_filtered,
             'source_stats': self.source_stats,
             'domains_processed': self.domains_processed,
             'status': self.status,

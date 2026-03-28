@@ -31,6 +31,30 @@ class Config:
     INCREMENTAL_UPDATE = True       # 是否启用增量更新（只抓取上次更新后的新论文）
     ENABLE_TIME_FILTER = True       # 是否启用时间过滤
 
+    # LLM 评估器配置
+    LLM_FILTER_ENABLED = True       # 是否启用 LLM 相关性过滤
+    LLM_FILTER_THRESHOLD = 75       # LLM 相关性分数阈值 (0-100)，只保存分数 >= 此值的论文
+    LLM_PROVIDER = 'openai'         # LLM 提供商: 'openai', 'anthropic', 'zhipu'
+    LLM_MODEL = None                # LLM 模型名称 (None 使用默认模型)
+    LLM_DELAY = 1.0                 # LLM API 请求间隔（秒）
+    LLM_API_KEY = None              # LLM API 密钥 (None 从环境变量读取)
+
+    # LLM 默认模型配置
+    LLM_DEFAULT_MODELS = {
+        'openai': 'gpt-4o-mini',           # OpenAI: 快速且便宜
+        'anthropic': 'claude-3-5-haiku-20241022',  # Anthropic: 快速且便宜
+        'zhipu': 'glm-4-flash'             # Zhipu: 快速且免费额度高
+    }
+
+    # LLM 系统提示词 (用于评估论文相关性)
+    LLM_SYSTEM_PROMPT = (
+        "You are an academic research assistant. Evaluate the relevance of the following paper "
+        "to this specific research context: Automated smart contract vulnerability repair using "
+        "multi-agent systems, LLM-based software engineering, and the analysis of real-world DeFi "
+        "exploit incidents for benchmark datasets. Score the relevance from 0 to 100. Return ONLY "
+        "the integer score."
+    )
+
     # API 端点
     ARXIV_API_URL = 'http://export.arxiv.org/api/query'
     DBLP_API_URL = 'https://dblp.org/search/publ/api'
