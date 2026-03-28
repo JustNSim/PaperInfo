@@ -383,12 +383,15 @@ def register_routes(app):
 
         def generate_progress():
             """生成SSE进度事件"""
+            import sys
             try:
                 # 获取该领域的所有论文
                 papers = Paper.query.filter_by(domain_id=domain_id).all()
 
                 if not papers:
-                    yield f"data: {json.dumps({'type': 'error', 'message': '该领域没有论文'})}\n\n"
+                    data = f"data: {json.dumps({'type': 'error', 'message': '该领域没有论文'})}\n\n"
+                    yield data
+                    sys.stdout.flush()
                     return
 
                 # 导入评估器和并行处理
@@ -399,7 +402,9 @@ def register_routes(app):
                 evaluator = _get_llm_evaluator(domain)
 
                 if not evaluator:
-                    yield f"data: {json.dumps({'type': 'error', 'message': 'LLM评估器未启用'})}\n\n"
+                    data = f"data: {json.dumps({'type': 'error', 'message': 'LLM评估器未启用'})}\n\n"
+                    yield data
+                    sys.stdout.flush()
                     return
 
                 total = len(papers)
@@ -407,128 +412,72 @@ def register_routes(app):
                 failed_count = 0
 
                 # 发送开始事件
-                yield f"data: {json.dumps({'type': 'start', 'total': total})}\n\n"
+                data = f"data: {json.dumps({'type': 'start', 'total': total})}\n\n"
+                yield data
 
-                # 使用并行评估
-                max_workers = min(Config.LLM_MAX_WORKERS, total)
-                use_parallel = Config.LLM_PARALLEL_ENABLED and total > 1
+                # 使用串行评估以确保进度实时更新
+                # 并行评估会导致事件缓冲，无法实时显示进度
+                for i, paper in enumerate(papers, 1):
+                    try:
+                        result = _evaluate_single_paper({
+                            'title': paper.title,
+                            'abstract': paper.abstract or ''
+                        }, evaluator, domain.id)
 
-                if use_parallel:
-                    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                        future_to_paper = {
-                            executor.submit(_evaluate_single_paper, {
-                                'title': p.title,
-                                'abstract': p.abstract or ''
-                            }, evaluator, domain.id): p
-                            for p in papers
+                        progress_data = {
+                            'type': 'progress',
+                            'current': i,
+                            'total': total,
+                            'percent': int(i / total * 100),
+                            'paper_id': paper.id,
+                            'title': paper.title[:50]
                         }
 
-                        for i, future in enumerate(as_completed(future_to_paper), 1):
-                            paper = future_to_paper[future]
-                            try:
-                                result = future.result()
+                        if result['success'] and not result.get('filtered'):
+                            # 更新评分
+                            paper.llm_score = result.get('llm_score')
+                            paper.llm_value_score = result.get('llm_value_score')
+                            success_count += 1
 
-                                if result['success'] and not result.get('filtered'):
-                                    # 更新评分
-                                    paper.llm_score = result.get('llm_score')
-                                    paper.llm_value_score = result.get('llm_value_score')
-                                    success_count += 1
+                            progress_data['relevance'] = result.get('llm_score')
+                            progress_data['value'] = result.get('llm_value_score')
 
-                                    yield f"data: {json.dumps({
-                                        'type': 'progress',
-                                        'current': i,
-                                        'total': total,
-                                        'percent': int(i / total * 100),
-                                        'paper_id': paper.id,
-                                        'title': paper.title[:50],
-                                        'relevance': result.get('llm_score'),
-                                        'value': result.get('llm_value_score')
-                                    })}\n\n"
-
-                                elif result.get('error'):
-                                    failed_count += 1
-                                    yield f"data: {json.dumps({
-                                        'type': 'progress',
-                                        'current': i,
-                                        'total': total,
-                                        'percent': int(i / total * 100),
-                                        'paper_id': paper.id,
-                                        'title': paper.title[:50],
-                                        'error': result.get('error')
-                                    })}\n\n"
-
-                            except Exception as e:
-                                failed_count += 1
-                                yield f"data: {json.dumps({
-                                    'type': 'progress',
-                                    'current': i,
-                                    'total': total,
-                                    'percent': int(i / total * 100),
-                                    'paper_id': paper.id,
-                                    'error': str(e)
-                                })}\n\n"
-
-                else:
-                    # 串行评估
-                    for i, paper in enumerate(papers, 1):
-                        try:
-                            result = _evaluate_single_paper({
-                                'title': paper.title,
-                                'abstract': paper.abstract or ''
-                            }, evaluator, domain.id)
-
-                            if result['success'] and not result.get('filtered'):
-                                paper.llm_score = result.get('llm_score')
-                                paper.llm_value_score = result.get('llm_value_score')
-                                success_count += 1
-
-                                yield f"data: {json.dumps({
-                                    'type': 'progress',
-                                    'current': i,
-                                    'total': total,
-                                    'percent': int(i / total * 100),
-                                    'paper_id': paper.id,
-                                    'title': paper.title[:50],
-                                    'relevance': result.get('llm_score'),
-                                    'value': result.get('llm_value_score')
-                                })}\n\n"
-
-                            elif result.get('error'):
-                                failed_count += 1
-                                yield f"data: {json.dumps({
-                                    'type': 'progress',
-                                    'current': i,
-                                    'total': total,
-                                    'percent': int(i / total * 100),
-                                    'paper_id': paper.id,
-                                    'error': result.get('error')
-                                })}\n\n"
-
-                        except Exception as e:
+                        elif result.get('error'):
                             failed_count += 1
-                            yield f"data: {json.dumps({
-                                'type': 'progress',
-                                'current': i,
-                                'total': total,
-                                'percent': int(i / total * 100),
-                                'paper_id': paper.id,
-                                'error': str(e)
-                            })}\n\n"
+                            progress_data['error'] = result.get('error')
+
+                        data = f"data: {json.dumps(progress_data)}\n\n"
+                        yield data
+
+                    except Exception as e:
+                        failed_count += 1
+                        data = f"data: {json.dumps({
+                            'type': 'progress',
+                            'current': i,
+                            'total': total,
+                            'percent': int(i / total * 100),
+                            'paper_id': paper.id,
+                            'title': paper.title[:50],
+                            'error': str(e)
+                        })}\n\n"
+                        yield data
 
                 # 提交更改
                 db.session.commit()
 
                 # 发送完成事件
-                yield f"data: {json.dumps({
+                data = f"data: {json.dumps({
                     'type': 'complete',
                     'total': total,
                     'success': success_count,
                     'failed': failed_count
                 })}\n\n"
+                yield data
 
             except Exception as e:
                 db.session.rollback()
-                yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+                data = f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+                yield data
 
         return Response(
             stream_with_context(generate_progress()),
