@@ -43,6 +43,11 @@ class Config:
     LLM_DELAY = float(os.environ.get('LLM_DELAY', '1.0'))  # LLM API 请求间隔（秒）
     LLM_API_KEY = None  # LLM API 密钥 (从环境变量自动读取)
 
+    # LLM 并行配置
+    LLM_PARALLEL_ENABLED = os.environ.get('LLM_PARALLEL_ENABLED', 'true').lower() == 'true'  # 是否启用并行评估
+    LLM_MAX_WORKERS = int(os.environ.get('LLM_MAX_WORKERS', '5'))  # 最大并发线程数
+    LLM_EVALUATION_TIMEOUT = int(os.environ.get('LLM_EVALUATION_TIMEOUT', '30'))  # 单次评估超时（秒）
+
     # 自定义 LLM API 配置 (用于第三方 OpenAI 兼容 API)
     CUSTOM_LLM_API_KEY = os.environ.get('CUSTOM_LLM_API_KEY')  # 自定义 API 密钥
     CUSTOM_LLM_BASE_URL = os.environ.get('CUSTOM_LLM_BASE_URL')  # 自定义 API 基础 URL

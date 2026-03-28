@@ -7,6 +7,8 @@ from datetime import datetime, timedelta
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.executors.pool import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor as ConcurrentExecutor, as_completed
+import threading
 
 from config import Config
 from models import db, Domain, Paper, UpdateLog
@@ -290,13 +292,71 @@ def fetch_papers_for_domain(domain: Domain) -> dict:
 BATCH_SIZE = 20
 
 
+def _evaluate_single_paper(paper_data: dict, evaluator, domain_id: int) -> dict:
+    """
+    评估单篇论文（用于并行处理）
+
+    Args:
+        paper_data: 论文数据字典
+        evaluator: LLM评估器实例
+        domain_id: 领域ID
+
+    Returns:
+        评估结果字典: {
+            'paper_data': 原始论文数据,
+            'success': bool,
+            'llm_score': 相关度评分,
+            'llm_value_score': 价值评分,
+            'error': 错误信息（如果有）
+        }
+    """
+    try:
+        if not evaluator:
+            return {
+                'paper_data': paper_data,
+                'success': True,
+                'llm_score': None,
+                'llm_value_score': None,
+                'filtered': False
+            }
+
+        eval_result = evaluator.evaluate(
+            title=paper_data.get('title', ''),
+            abstract=paper_data.get('abstract') or ''
+        )
+
+        if eval_result.error:
+            return {
+                'paper_data': paper_data,
+                'success': False,
+                'error': eval_result.error
+            }
+
+        filtered = eval_result.relevance_score < Config.LLM_FILTER_THRESHOLD
+        return {
+            'paper_data': paper_data,
+            'success': True,
+            'llm_score': eval_result.relevance_score,
+            'llm_value_score': eval_result.value_score,
+            'filtered': filtered
+        }
+
+    except Exception as e:
+        return {
+            'paper_data': paper_data,
+            'success': False,
+            'error': str(e)
+        }
+
+
 def _save_papers(papers: list, domain: Domain) -> int:
     """
-    保存论文到数据库（去重，批量提交）
+    保存论文到数据库（去重，批量提交，支持并行LLM评估）
 
     优化策略：
     - 批量预查询已存在的论文（一次查询替代多次）
     - 使用集合进行 O(1) 去重检查
+    - 并行LLM评估（如果启用）
     - 每 BATCH_SIZE 篇论文提交一次
 
     Args:
@@ -325,82 +385,115 @@ def _save_papers(papers: list, domain: Domain) -> int:
     existing_set = {(p.source, p.title) for p in existing_papers}
     logger.info(f"预查询发现 {len(existing_set)} 篇已存在的论文")
 
-    # 第二步：处理新论文
-    new_count = 0
-    batch = []  # 当前批次的论文
-    committed_count = 0  # 已提交的论文数
+    # 第二步：筛选出新论文
+    new_papers = []
+    for paper_data in papers:
+        if (paper_data['source'], paper_data['title']) not in existing_set:
+            new_papers.append(paper_data)
 
-    # 获取 LLM 评估器（传入领域对象以获取领域专用的prompt）
+    if not new_papers:
+        logger.info("没有新论文需要处理")
+        return 0
+
+    logger.info(f"找到 {len(new_papers)} 篇新论文需要LLM评估")
+
+    # 获取 LLM 评估器
     evaluator = _get_llm_evaluator(domain)
 
-    for paper_data in papers:
-        try:
-            # 使用集合进行 O(1) 去重检查
-            if (paper_data['source'], paper_data['title']) in existing_set:
-                logger.debug(f"论文已存在，跳过: {paper_data['title'][:50]}")
-                continue
+    # 第三步：并行LLM评估（如果启用）
+    evaluated_results = []
+    global llm_filtered_count
 
-            # LLM 相关性评估
-            llm_score = None
-            llm_value_score = None
-            if evaluator:
-                eval_result = evaluator.evaluate(
-                    title=paper_data.get('title', ''),
-                    abstract=paper_data.get('abstract') or ''
-                )
+    if evaluator and Config.LLM_PARALLEL_ENABLED and len(new_papers) > 1:
+        # 并行评估
+        max_workers = min(Config.LLM_MAX_WORKERS, len(new_papers))
+        logger.info(f"使用 {max_workers} 个线程并行评估 {len(new_papers)} 篇论文")
 
-                if eval_result.error:
-                    logger.warning(f"LLM 评估出错，跳过论文: {paper_data.get('title', '')[:50]} - {eval_result.error}")
-                    continue
+        with ConcurrentExecutor(max_workers=max_workers) as executor:
+            # 提交所有评估任务
+            future_to_paper = {
+                executor.submit(_evaluate_single_paper, paper_data, evaluator, domain.id): paper_data
+                for paper_data in new_papers
+            }
 
-                llm_score = eval_result.relevance_score
-                llm_value_score = eval_result.value_score
+            # 收集结果
+            for future in as_completed(future_to_paper):
+                result = future.result()
+                evaluated_results.append(result)
 
-                if eval_result.relevance_score < Config.LLM_FILTER_THRESHOLD:
-                    logger.debug(f"LLM 相关度评分 {eval_result.relevance_score} < {Config.LLM_FILTER_THRESHOLD}，跳过: {paper_data.get('title', '')[:50]}")
-                    global llm_filtered_count
+                if result['success']:
+                    if result.get('filtered'):
+                        llm_filtered_count += 1
+                        logger.debug(f"LLM过滤: {result['paper_data']['title'][:50]}")
+                    else:
+                        scores = result.get('llm_score')
+                        values = result.get('llm_value_score')
+                        logger.debug(f"评估通过: {result['paper_data']['title'][:50]} (相关度: {scores}, 价值: {values})")
+                else:
+                    logger.warning(f"评估失败: {result['paper_data']['title'][:50]} - {result.get('error')}")
+
+    else:
+        # 串行评估（向后兼容或未启用并行）
+        logger.info(f"串行评估 {len(new_papers)} 篇论文")
+        for paper_data in new_papers:
+            result = _evaluate_single_paper(paper_data, evaluator, domain.id)
+            evaluated_results.append(result)
+
+            if result['success']:
+                if result.get('filtered'):
                     llm_filtered_count += 1
-                    continue
+                    logger.debug(f"LLM过滤: {result['paper_data']['title'][:50]}")
+                else:
+                    scores = result.get('llm_score')
+                    values = result.get('llm_value_score')
+                    logger.debug(f"评估通过: {result['paper_data']['title'][:50]} (相关度: {scores}, 价值: {values})")
+            else:
+                logger.warning(f"评估失败: {result['paper_data']['title'][:50]} - {result.get('error')}")
 
-                logger.info(f"LLM 相关度={eval_result.relevance_score}, 价值={eval_result.value_score} >= {Config.LLM_FILTER_THRESHOLD}，通过: {paper_data.get('title', '')[:50]}")
+    # 第四步：保存通过评估的论文
+    batch = []
+    committed_count = 0
+    new_count = 0
 
-            # 创建新论文对象
-            paper = Paper(
-                title=paper_data['title'],
-                authors=paper_data.get('authors', []),
-                abstract=paper_data.get('abstract'),
-                source=paper_data['source'],
-                source_id=paper_data.get('source_id'),
-                year=paper_data.get('year'),
-                venue=paper_data.get('venue'),
-                url=paper_data.get('url'),
-                pdf_url=paper_data.get('pdf_url'),
-                published_date=paper_data.get('published_date'),
-                domain_id=domain.id,
-                llm_score=llm_score,
-                llm_value_score=llm_value_score
-            )
-
-            batch.append(paper)
-            new_count += 1
-            logger.debug(f"准备新增论文: {paper_data['title'][:50]}")
-
-            # 达到批次大小时提交
-            if len(batch) >= BATCH_SIZE:
-                committed = _commit_batch(batch)
-                committed_count += committed
-                batch = []  # 清空批次
-
-        except Exception as e:
-            logger.warning(f"处理论文失败: {e}")
+    for result in evaluated_results:
+        if not result['success']:
             continue
+
+        if result.get('filtered'):
+            continue
+
+        paper_data = result['paper_data']
+        paper = Paper(
+            title=paper_data['title'],
+            authors=paper_data.get('authors', []),
+            abstract=paper_data.get('abstract'),
+            source=paper_data['source'],
+            source_id=paper_data.get('source_id'),
+            year=paper_data.get('year'),
+            venue=paper_data.get('venue'),
+            url=paper_data.get('url'),
+            pdf_url=paper_data.get('pdf_url'),
+            published_date=paper_data.get('published_date'),
+            domain_id=domain.id,
+            llm_score=result.get('llm_score'),
+            llm_value_score=result.get('llm_value_score')
+        )
+
+        batch.append(paper)
+        new_count += 1
+
+        # 达到批次大小时提交
+        if len(batch) >= BATCH_SIZE:
+            committed = _commit_batch(batch)
+            committed_count += committed
+            batch = []
 
     # 提交剩余的论文
     if batch:
         committed = _commit_batch(batch)
         committed_count += committed
 
-    logger.info(f"共尝试新增 {new_count} 篇论文，成功提交 {committed_count} 篇")
+    logger.info(f"共评估 {len(evaluated_results)} 篇论文，通过 {new_count} 篇，成功提交 {committed_count} 篇")
     return committed_count
 
 
