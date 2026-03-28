@@ -76,7 +76,9 @@ class OpenAIProvider(BaseLLMProvider):
         """Evaluate using OpenAI API"""
         self._wait_for_rate_limit()
 
-        user_prompt = f"Title: {title}\n\nAbstract: {abstract}"
+        # 优化：只使用摘要的前300个字符，减少token消耗
+        abstract_preview = (abstract[:300] + '...') if abstract and len(abstract) > 300 else abstract
+        user_prompt = f"Title: {title}\n\nAbstract: {abstract_preview}"
 
         try:
             client = self._get_client()
@@ -177,13 +179,15 @@ class AnthropicProvider(BaseLLMProvider):
         """Evaluate using Anthropic API"""
         self._wait_for_rate_limit()
 
-        user_prompt = f"Title: {title}\n\nAbstract: {abstract}"
+        # 优化：只使用摘要的前300个字符，减少token消耗
+        abstract_preview = (abstract[:300] + '...') if abstract and len(abstract) > 300 else abstract
+        user_prompt = f"Title: {title}\n\nAbstract: {abstract_preview}"
 
         try:
             client = self._get_client()
             response = client.messages.create(
                 model=self.model,
-                max_tokens=10,
+                max_tokens=50,
                 temperature=0,
                 system=system_prompt,
                 messages=[
@@ -278,7 +282,9 @@ class ZhipuProvider(BaseLLMProvider):
         """Evaluate using Zhipu AI API"""
         self._wait_for_rate_limit()
 
-        user_prompt = f"Title: {title}\n\nAbstract: {abstract}"
+        # 优化：只使用摘要的前300个字符，减少token消耗
+        abstract_preview = (abstract[:300] + '...') if abstract and len(abstract) > 300 else abstract
+        user_prompt = f"Title: {title}\n\nAbstract: {abstract_preview}"
 
         try:
             client = self._get_client()
@@ -390,7 +396,9 @@ class CustomOpenAIProvider(BaseLLMProvider):
         """Evaluate using custom OpenAI-compatible API"""
         self._wait_for_rate_limit()
 
-        user_prompt = f"Title: {title}\n\nAbstract: {abstract}"
+        # 优化：只使用摘要的前300个字符，减少token消耗
+        abstract_preview = (abstract[:300] + '...') if abstract and len(abstract) > 300 else abstract
+        user_prompt = f"Title: {title}\n\nAbstract: {abstract_preview}"
 
         try:
             client = self._get_client()
