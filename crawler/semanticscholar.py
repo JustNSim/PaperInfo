@@ -30,7 +30,7 @@ class SemanticScholarCrawler(BaseCrawler):
 
     def search(self, keywords: List[str], venues: List[str] = None,
                from_year: Optional[int] = None, to_year: Optional[int] = None,
-               **kwargs) -> List[Dict[str, Any]]:
+               core_keywords: List[str] = None, **kwargs) -> List[Dict[str, Any]]:
         """
         搜索 Semantic Scholar 论文
 
@@ -39,11 +39,16 @@ class SemanticScholarCrawler(BaseCrawler):
             venues: 会议/期刊列表（用于过滤）
             from_year: 起始年份
             to_year: 结束年份
+            core_keywords: 核心关键词列表（用于相关性评分）
             **kwargs: 其他参数
 
         Returns:
             论文信息列表
         """
+        # 如果没有提供核心关键词，从 keywords 中提取前 5 个作为核心
+        if core_keywords is None:
+            core_keywords = keywords[:5]
+
         all_papers = []
 
         # 构建查询字符串：使用 OR 逻辑组合关键词
@@ -73,7 +78,7 @@ class SemanticScholarCrawler(BaseCrawler):
 
         try:
             # 发送搜索请求
-            papers = self._search_papers(query, self.max_results)
+            papers = self._search_papers(query, self.max_results, core_keywords)
             all_papers.extend(papers)
 
             logger.info(f"从 Semantic Scholar 获取到 {len(all_papers)} 篇论文")
@@ -83,8 +88,14 @@ class SemanticScholarCrawler(BaseCrawler):
             logger.error(f"Semantic Scholar API 请求失败: {e}")
             return []
 
-    def _search_papers(self, query: str, limit: int) -> List[Dict[str, Any]]:
-        """执行搜索请求"""
+    def _search_papers(self, query: str, limit: int, core_keywords: List[str] = None) -> List[Dict[str, Any]]:
+        """执行搜索请求
+
+        Args:
+            query: 查询字符串
+            limit: 最大结果数
+            core_keywords: 核心关键词列表
+        """
         params = {
             'query': query,
             'limit': min(limit, 100),
@@ -109,7 +120,7 @@ class SemanticScholarCrawler(BaseCrawler):
             paper = self._parse_paper(item)
             if paper:
                 # 计算相关性分数并过滤
-                score = self._calculate_relevance_score(paper)
+                score = self._calculate_relevance_score(paper, core_keywords)
                 if score >= self.MIN_RELEVANCE_SCORE:
                     papers.append(paper)
 
@@ -170,9 +181,13 @@ class SemanticScholarCrawler(BaseCrawler):
             logger.warning(f"解析 Semantic Scholar 条目失败: {e}")
             return None
 
-    def _calculate_relevance_score(self, paper: Dict[str, Any]) -> int:
+    def _calculate_relevance_score(self, paper: Dict[str, Any], core_keywords: List[str] = None) -> int:
         """
         计算论文相关性分数
+
+        Args:
+            paper: 论文数据
+            core_keywords: 核心关键词列表（如果为 None，使用默认列表）
 
         S2 覆盖面广，需要严格过滤以避免不相关论文
         """
@@ -180,37 +195,42 @@ class SemanticScholarCrawler(BaseCrawler):
         title = paper.get('title', '').lower()
         abstract = (paper.get('abstract') or '').lower()
 
-        # 核心关键词（高权重）
-        core_keywords = {'blockchain', 'smart contract', 'cryptocurrency', 'bitcoin',
-                        'ethereum', 'solidity', 'defi', 'nft', 'dao', 'zk-snark',
-                        'zk-stark', 'merkle', 'byzantine', 'consensus', 'sharding'}
+        # 默认核心关键词（区块链领域）
+        if core_keywords is None:
+            core_keywords = ['blockchain', 'smart contract', 'cryptocurrency', 'bitcoin',
+                            'ethereum', 'solidity', 'defi', 'nft', 'dao']
 
-        # 负面关键词
+        # 转换为集合用于查找
+        core_set = {kw.lower() for kw in core_keywords}
+
+        # 负面关键词（通用）
         negative_keywords = {'traffic signal', 'manufacturing', 'battery', 'forecasting',
                            'recommendation system', 'social network', 'search engine',
-                           'image processing', 'computer vision', 'speech recognition'}
+                           'image processing', 'computer vision', 'speech recognition',
+                           'video processing', 'natural language'}
 
         # 检查负面关键词
         for neg_kw in negative_keywords:
             if neg_kw in title or neg_kw in abstract:
                 return 0
 
-        # 核心关键词匹配
-        for core_kw in core_keywords:
+        # 核心关键词匹配（高权重）
+        for core_kw in core_set:
             if core_kw in title:
                 score += 30
                 break
 
         # 其他关键词匹配（标题）
         title_words = {'decentralized', 'distributed', 'protocol', 'verification',
-                       'cryptography', 'encryption', 'hash', 'ledger', 'token'}
+                       'cryptography', 'encryption', 'hash', 'ledger', 'token', 'agent',
+                       'multi-agent', 'repair', 'vulnerability', 'llm', 'code generation'}
         for word in title_words:
             if word in title:
                 score += 10
 
         # 摘要匹配
         if abstract:
-            for core_kw in core_keywords:
+            for core_kw in core_set:
                 if core_kw in abstract:
                     score += 5
                     break

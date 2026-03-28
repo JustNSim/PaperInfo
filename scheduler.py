@@ -175,11 +175,14 @@ def fetch_papers_for_domain(domain: Domain) -> dict:
             timeout=Config.REQUEST_TIMEOUT,
             max_results=100
         )
+        # 使用前 5 个关键词作为核心关键词
+        core_keywords = domain.keywords[:5] if domain.keywords else None
         s2_papers = s2_crawler.search(
             keywords=domain.keywords,
             venues=domain.ccf_venues,
             from_year=from_year,
-            to_year=to_year
+            to_year=to_year,
+            core_keywords=core_keywords
         )
         s2_count = _save_papers(s2_papers, domain)
         result['new_count'] += s2_count
