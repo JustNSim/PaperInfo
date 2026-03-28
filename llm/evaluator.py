@@ -249,6 +249,82 @@ class ZhipuProvider(BaseLLMProvider):
         return 0
 
 
+class CustomOpenAIProvider(BaseLLMProvider):
+    """
+    Custom OpenAI-compatible API provider
+
+    Supports any OpenAI-compatible API endpoint with configurable:
+    - Base URL (e.g., https://api.deepseek.com, https://api.moonshot.cn)
+    - API key
+    - Model name
+    """
+
+    def __init__(self, api_key: str, base_url: str, model: str = "gpt-4o-mini", delay: float = 1.0):
+        super().__init__(api_key, delay)
+        self.base_url = base_url.rstrip('/')
+        self.model = model
+        self._client = None
+
+    def _get_client(self):
+        """Lazy import and initialization of OpenAI client with custom base URL"""
+        if self._client is None:
+            try:
+                import openai
+                self._client = openai.OpenAI(
+                    api_key=self.api_key,
+                    base_url=self.base_url
+                )
+            except ImportError:
+                raise LLMEvaluatorError("OpenAI package not installed. Install with: pip install openai")
+        return self._client
+
+    def evaluate(self, title: str, abstract: str, system_prompt: str) -> EvalResult:
+        """Evaluate using custom OpenAI-compatible API"""
+        self._wait_for_rate_limit()
+
+        user_prompt = f"Title: {title}\n\nAbstract: {abstract}"
+
+        try:
+            client = self._get_client()
+            response = client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                temperature=0,
+                max_tokens=10
+            )
+
+            content = response.choices[0].message.content.strip()
+            score = self._parse_score(content)
+
+            return EvalResult(
+                score=score,
+                model=self.model,
+                provider=f"custom ({self.base_url})",
+                raw_response=content
+            )
+
+        except ImportError as e:
+            raise LLMEvaluatorError(f"OpenAI import failed: {e}")
+        except Exception as e:
+            error_msg = str(e)
+            if "rate_limit" in error_msg.lower() or "429" in error_msg:
+                raise RateLimitError(f"Custom API rate limit exceeded: {e}")
+            raise LLMEvaluatorError(f"Custom API error: {e}")
+
+    def _parse_score(self, content: str) -> int:
+        """Parse score from LLM response"""
+        import re
+        match = re.search(r'\b(\d{1,3})\b', content)
+        if match:
+            score = int(match.group(1))
+            return max(0, min(100, score))
+        logger.warning(f"Could not parse score from response: {content}")
+        return 0
+
+
 class LLMEvaluator:
     """
     Main LLM Evaluator class
@@ -260,6 +336,12 @@ class LLMEvaluator:
         result = evaluator.evaluate(title, abstract)
         if result.score >= threshold:
             # Save paper
+
+    Supported providers:
+        - openai: OpenAI (GPT-4o-mini, etc.)
+        - anthropic: Anthropic (Claude)
+        - zhipu: Zhipu AI (GLM)
+        - custom: Any OpenAI-compatible API (set CUSTOM_LLM_BASE_URL)
     """
 
     DEFAULT_SYSTEM_PROMPT = (
@@ -283,12 +365,16 @@ class LLMEvaluator:
         Initialize LLM Evaluator
 
         Args:
-            provider: LLM provider ('openai', 'anthropic', 'zhipu')
+            provider: LLM provider ('openai', 'anthropic', 'zhipu', 'custom')
             api_key: API key (if None, reads from environment variable)
             model: Model name (if None, uses default for provider)
             delay: Delay between requests in seconds
             system_prompt: Custom system prompt (if None, uses default)
             enabled: Whether evaluation is enabled
+
+        For custom provider, also set:
+            CUSTOM_LLM_BASE_URL: Base URL of the API endpoint
+            CUSTOM_LLM_MODEL: Model name (optional, has default)
         """
         self.enabled = enabled
         self.system_prompt = system_prompt or self.DEFAULT_SYSTEM_PROMPT
@@ -303,7 +389,8 @@ class LLMEvaluator:
             env_var_map = {
                 'openai': 'OPENAI_API_KEY',
                 'anthropic': 'ANTHROPIC_API_KEY',
-                'zhipu': 'ZHIPUAI_API_KEY'
+                'zhipu': 'ZHIPUAI_API_KEY',
+                'custom': 'CUSTOM_LLM_API_KEY'
             }
             api_key = os.environ.get(env_var_map.get(provider, ''))
             if not api_key:
@@ -316,7 +403,8 @@ class LLMEvaluator:
         provider_classes = {
             'openai': OpenAIProvider,
             'anthropic': AnthropicProvider,
-            'zhipu': ZhipuProvider
+            'zhipu': ZhipuProvider,
+            'custom': CustomOpenAIProvider
         }
 
         provider_class = provider_classes.get(provider.lower())
@@ -327,13 +415,31 @@ class LLMEvaluator:
         default_models = {
             'openai': 'gpt-4o-mini',
             'anthropic': 'claude-3-5-haiku-20241022',
-            'zhipu': 'glm-4-flash'
+            'zhipu': 'glm-4-flash',
+            'custom': 'gpt-4o-mini'  # Will be overridden by CUSTOM_LLM_MODEL env var if set
         }
 
         if model is None:
             model = default_models.get(provider.lower())
 
-        self._provider = provider_class(api_key=api_key, model=model, delay=delay)
+        # Initialize provider (custom provider needs additional parameters)
+        if provider.lower() == 'custom':
+            base_url = os.environ.get('CUSTOM_LLM_BASE_URL', '')
+            if not base_url:
+                raise LLMEvaluatorError(
+                    "CUSTOM_LLM_BASE_URL environment variable not set for custom provider"
+                )
+            if model is None:
+                model = os.environ.get('CUSTOM_LLM_MODEL', 'gpt-4o-mini')
+            self._provider = CustomOpenAIProvider(
+                api_key=api_key,
+                base_url=base_url,
+                model=model,
+                delay=delay
+            )
+        else:
+            self._provider = provider_class(api_key=api_key, model=model, delay=delay)
+
         self.provider_name = provider.lower()
         logger.info(f"LLM Evaluator initialized with provider={provider}, model={model}")
 

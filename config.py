@@ -38,16 +38,22 @@ class Config:
     # LLM 评估器配置
     LLM_FILTER_ENABLED = os.environ.get('LLM_FILTER_ENABLED', 'true').lower() == 'true'
     LLM_FILTER_THRESHOLD = int(os.environ.get('LLM_FILTER_THRESHOLD', '75'))
-    LLM_PROVIDER = os.environ.get('LLM_PROVIDER', 'openai')  # LLM 提供商: 'openai', 'anthropic', 'zhipu'
+    LLM_PROVIDER = os.environ.get('LLM_PROVIDER', 'openai')  # LLM 提供商: 'openai', 'anthropic', 'zhipu', 'custom'
     LLM_MODEL = os.environ.get('LLM_MODEL')  # LLM 模型名称 (None 使用默认模型)
     LLM_DELAY = float(os.environ.get('LLM_DELAY', '1.0'))  # LLM API 请求间隔（秒）
     LLM_API_KEY = None  # LLM API 密钥 (从环境变量自动读取)
+
+    # 自定义 LLM API 配置 (用于第三方 OpenAI 兼容 API)
+    CUSTOM_LLM_API_KEY = os.environ.get('CUSTOM_LLM_API_KEY')  # 自定义 API 密钥
+    CUSTOM_LLM_BASE_URL = os.environ.get('CUSTOM_LLM_BASE_URL')  # 自定义 API 基础 URL
+    CUSTOM_LLM_MODEL = os.environ.get('CUSTOM_LLM_MODEL')  # 自定义模型名称
 
     # LLM 默认模型配置
     LLM_DEFAULT_MODELS = {
         'openai': 'gpt-4o-mini',           # OpenAI: 快速且便宜
         'anthropic': 'claude-3-5-haiku-20241022',  # Anthropic: 快速且便宜
-        'zhipu': 'glm-4-flash'             # Zhipu: 快速且免费额度高
+        'zhipu': 'glm-4-flash',            # Zhipu: 快速且免费额度高
+        'custom': 'gpt-4o-mini'            # Custom: 使用 CUSTOM_LLM_MODEL 环境变量
     }
 
     # LLM 系统提示词 (用于评估论文相关性)
