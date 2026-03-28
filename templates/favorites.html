@@ -175,10 +175,48 @@ const originalTitles = {
     {% endfor %}
 };
 
+// localStorage 键名（与 index.html 保持一致）
+const STORAGE_KEYS = {
+    titles: 'paperinfo_trans_titles',
+    abstracts: 'paperinfo_trans_abstracts'
+};
+
 const translations = {
     titles: {},
     abstracts: {}
 };
+
+// 从 localStorage 恢复翻译结果
+function loadTranslationsFromStorage() {
+    try {
+        const savedTitles = localStorage.getItem(STORAGE_KEYS.titles);
+        const savedAbstracts = localStorage.getItem(STORAGE_KEYS.abstracts);
+
+        if (savedTitles) {
+            translations.titles = JSON.parse(savedTitles);
+            console.log('已恢复标题翻译:', Object.keys(translations.titles).length, '篇');
+        }
+        if (savedAbstracts) {
+            translations.abstracts = JSON.parse(savedAbstracts);
+            console.log('已恢复摘要翻译:', Object.keys(translations.abstracts).length, '篇');
+        }
+    } catch (err) {
+        console.error('恢复翻译结果失败:', err);
+    }
+}
+
+// 保存翻译结果到 localStorage
+function saveTranslationsToStorage() {
+    try {
+        localStorage.setItem(STORAGE_KEYS.titles, JSON.stringify(translations.titles));
+        localStorage.setItem(STORAGE_KEYS.abstracts, JSON.stringify(translations.abstracts));
+    } catch (err) {
+        console.error('保存翻译结果失败:', err);
+    }
+}
+
+// 页面加载时恢复翻译结果
+loadTranslationsFromStorage();
 
 // 翻译功能
 function toggleAbstract(paperId) {
@@ -340,6 +378,7 @@ async function translateTitle(paperId) {
     if (translations.titles[paperId]) {
         titleEl.textContent = originalTitle;
         delete translations.titles[paperId];
+        saveTranslationsToStorage();  // 保存到 localStorage
         showToast('已切换回原文', 'info');
         return;
     }
@@ -351,6 +390,7 @@ async function translateTitle(paperId) {
         const translated = await translateText(originalTitle);
         titleEl.innerHTML = `<span class="translated-badge" title="译文">${translated}</span>`;
         translations.titles[paperId] = translated;
+        saveTranslationsToStorage();  // 保存到 localStorage
         showToast('标题翻译完成（再次点击切换回原文）', 'success');
     } catch (err) {
         titleEl.innerHTML = originalHTML;
@@ -374,6 +414,7 @@ async function translateAbstract(paperId) {
         abstractEl.innerHTML = `<small>${displayText}</small>`;
         abstractEl.classList.remove('translated');
         delete translations.abstracts[paperId];
+        saveTranslationsToStorage();  // 保存到 localStorage
         showToast('已切换回原文', 'info');
         return;
     }
@@ -388,6 +429,7 @@ async function translateAbstract(paperId) {
         abstractEl.innerHTML = `<small>${displayText}</small>`;
         abstractEl.classList.add('translated');
         translations.abstracts[paperId] = translated;
+        saveTranslationsToStorage();  // 保存到 localStorage
         showToast('摘要翻译完成（再次点击切换回原文）', 'success');
     } catch (err) {
         abstractEl.innerHTML = originalHTML;
