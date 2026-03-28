@@ -25,7 +25,8 @@ class RateLimitError(LLMEvaluatorError):
 @dataclass
 class EvalResult:
     """Result of paper evaluation"""
-    score: int
+    relevance_score: int  # 相关性评分 (0-100)
+    value_score: int      # 价值评分 (0-100)
     model: str
     provider: str
     raw_response: Optional[str] = None
@@ -90,10 +91,11 @@ class OpenAIProvider(BaseLLMProvider):
             )
 
             content = response.choices[0].message.content.strip()
-            score = self._parse_score(content)
+            relevance_score, value_score = self._parse_dual_scores(content)
 
             return EvalResult(
-                score=score,
+                relevance_score=relevance_score,
+                value_score=value_score,
                 model=self.model,
                 provider="openai",
                 raw_response=content
@@ -107,16 +109,50 @@ class OpenAIProvider(BaseLLMProvider):
                 raise RateLimitError(f"OpenAI rate limit exceeded: {e}")
             raise LLMEvaluatorError(f"OpenAI API error: {e}")
 
-    def _parse_score(self, content: str) -> int:
-        """Parse score from LLM response"""
-        # Extract integer from response
+    def _parse_dual_scores(self, content: str) -> tuple[int, int]:
+        """Parse relevance and value scores from LLM response
+
+        Expected formats:
+        - "Relevance: 85, Value: 72"
+        - "相关性: 85, 价值: 72"
+        - "85, 72" or "85 72"
+        - "Relevance: 85\nValue: 72"
+        """
         import re
-        match = re.search(r'\b(\d{1,3})\b', content)
-        if match:
-            score = int(match.group(1))
-            return max(0, min(100, score))  # Clamp to 0-100
-        logger.warning(f"Could not parse score from response: {content}")
-        return 0
+
+        # Try to extract both scores using various patterns
+        patterns = [
+            # Pattern 1: "Relevance: 85, Value: 72" or similar
+            r'(?:Relevance|相关性|相关度)[:\s]*(\d{1,3})\s*[,，]\s*(?:Value|价值)[:\s]*(\d{1,3})',
+            # Pattern 2: "Relevance: 85\nValue: 72" or similar
+            r'(?:Relevance|相关性|相关度)[:\s]*(\d{1,3})\s*(?:\n|,)\s*(?:Value|价值)[:\s]*(\d{1,3})',
+            # Pattern 3: Just two numbers separated by comma or space
+            r'(\d{1,3})\s*[,，\s]\s*(\d{1,3})',
+            # Pattern 4: Two scores on separate lines
+            r'(\d{1,3})\s*\n\s*(\d{1,3})',
+        ]
+
+        for pattern in patterns:
+            match = re.search(pattern, content, re.IGNORECASE)
+            if match:
+                relevance = max(0, min(100, int(match.group(1))))
+                value = max(0, min(100, int(match.group(2))))
+                return relevance, value
+
+        # Fallback: try to find any single number and use for both
+        single_match = re.search(r'\b(\d{1,3})\b', content)
+        if single_match:
+            score = max(0, min(100, int(single_match.group(1))))
+            logger.warning(f"Could not parse dual scores from response: {content}, using single score for both")
+            return score, score
+
+        logger.warning(f"Could not parse any scores from response: {content}")
+        return 0, 0
+
+    def _parse_score(self, content: str) -> int:
+        """Parse score from LLM response (legacy method for compatibility)"""
+        relevance, _ = self._parse_dual_scores(content)
+        return relevance
 
 
 class AnthropicProvider(BaseLLMProvider):
@@ -156,10 +192,11 @@ class AnthropicProvider(BaseLLMProvider):
             )
 
             content = response.content[0].text.strip()
-            score = self._parse_score(content)
+            relevance_score, value_score = self._parse_dual_scores(content)
 
             return EvalResult(
-                score=score,
+                relevance_score=relevance_score,
+                value_score=value_score,
                 model=self.model,
                 provider="anthropic",
                 raw_response=content
@@ -221,10 +258,11 @@ class ZhipuProvider(BaseLLMProvider):
             )
 
             content = response.choices[0].message.content.strip()
-            score = self._parse_score(content)
+            relevance_score, value_score = self._parse_dual_scores(content)
 
             return EvalResult(
-                score=score,
+                relevance_score=relevance_score,
+                value_score=value_score,
                 model=self.model,
                 provider="zhipu",
                 raw_response=content
@@ -297,10 +335,11 @@ class CustomOpenAIProvider(BaseLLMProvider):
             )
 
             content = response.choices[0].message.content.strip()
-            score = self._parse_score(content)
+            relevance_score, value_score = self._parse_dual_scores(content)
 
             return EvalResult(
-                score=score,
+                relevance_score=relevance_score,
+                value_score=value_score,
                 model=self.model,
                 provider=f"custom ({self.base_url})",
                 raw_response=content
@@ -345,11 +384,16 @@ class LLMEvaluator:
     """
 
     DEFAULT_SYSTEM_PROMPT = (
-        "You are an academic research assistant. Evaluate the relevance of the following paper "
-        "to this specific research context: Automated smart contract vulnerability repair using "
-        "multi-agent systems, LLM-based software engineering, and the analysis of real-world DeFi "
-        "exploit incidents for benchmark datasets. Score the relevance from 0 to 100. Return ONLY "
-        "the integer score."
+        "You are an academic research assistant. Evaluate the following paper on two dimensions:\n"
+        "1. Relevance (相关性): How closely the paper relates to this specific research context: "
+        "Automated smart contract vulnerability repair using multi-agent systems, LLM-based "
+        "software engineering, and the analysis of real-world DeFi exploit incidents for benchmark "
+        "datasets. Score from 0 to 100.\n"
+        "2. Value (价值): Academic merit including novelty, innovation, technical soundness, "
+        "practical applicability, and significance to the broader research community. Score from "
+        "0 to 100.\n\n"
+        "Return your response in the format: \"Relevance: XX, Value: YY\" where XX and YY are "
+        "integer scores. Return ONLY the scores, no other text."
     )
 
     def __init__(
@@ -458,7 +502,8 @@ class LLMEvaluator:
         if not self.enabled:
             # Return max score if disabled (allow all papers)
             return EvalResult(
-                score=100,
+                relevance_score=100,
+                value_score=100,
                 model="disabled",
                 provider="disabled",
                 raw_response=None
@@ -467,7 +512,8 @@ class LLMEvaluator:
         if not abstract:
             logger.warning(f"No abstract provided for '{title}', returning score 0")
             return EvalResult(
-                score=0,
+                relevance_score=0,
+                value_score=0,
                 model=self._provider.model if self._provider else "unknown",
                 provider=self.provider_name,
                 error="No abstract provided"
@@ -475,13 +521,14 @@ class LLMEvaluator:
 
         try:
             result = self._provider.evaluate(title, abstract, self.system_prompt)
-            logger.debug(f"Evaluated '{title[:50]}...': score={result.score}")
+            logger.debug(f"Evaluated '{title[:50]}...': relevance={result.relevance_score}, value={result.value_score}")
             return result
 
         except RateLimitError as e:
             logger.error(f"Rate limit exceeded: {e}")
             return EvalResult(
-                score=0,
+                relevance_score=0,
+                value_score=0,
                 model=self._provider.model if self._provider else "unknown",
                 provider=self.provider_name,
                 error=str(e)
@@ -490,7 +537,8 @@ class LLMEvaluator:
         except LLMEvaluatorError as e:
             logger.error(f"LLM evaluation error: {e}")
             return EvalResult(
-                score=0,
+                relevance_score=0,
+                value_score=0,
                 model=self._provider.model if self._provider else "unknown",
                 provider=self.provider_name,
                 error=str(e)
@@ -499,7 +547,8 @@ class LLMEvaluator:
         except Exception as e:
             logger.error(f"Unexpected error during evaluation: {e}")
             return EvalResult(
-                score=0,
+                relevance_score=0,
+                value_score=0,
                 model=self._provider.model if self._provider else "unknown",
                 provider=self.provider_name,
                 error=str(e)

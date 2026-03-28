@@ -74,6 +74,10 @@
                 <h6 class="mb-0"><i class="bi bi-gear"></i> 操作</h6>
             </div>
             <div class="card-body">
+                <button class="btn btn-info w-100 mb-2" onclick="showStats()">
+                    <i class="bi bi-bar-chart"></i> 查看统计
+                </button>
+                <hr>
                 <button class="btn btn-success w-100 mb-2" onclick="triggerFetch()" id="fetchBtn">
                     <i class="bi bi-cloud-download"></i> 立即更新
                 </button>
@@ -118,6 +122,12 @@
                     </a>
                     <a href="?{% if request.args %}{% for k, v in request.args.items() %}{% if k != 'sort' %}{{ k }}={{ v }}&{% endif %}{% endfor %}{% endif %}sort=score_asc" class="btn btn-outline-success">
                         <i class="bi bi-sort-numeric-up"></i> 相关度&#8593;
+                    </a>
+                    <a href="?{% if request.args %}{% for k, v in request.args.items() %}{% if k != 'sort' %}{{ k }}={{ v }}&{% endif %}{% endfor %}{% endif %}sort=value_desc" class="btn btn-outline-info">
+                        <i class="bi bi-sort-numeric-down"></i> 价值&#8595;
+                    </a>
+                    <a href="?{% if request.args %}{% for k, v in request.args.items() %}{% if k != 'sort' %}{{ k }}={{ v }}&{% endif %}{% endfor %}{% endif %}sort=value_asc" class="btn btn-outline-info">
+                        <i class="bi bi-sort-numeric-up"></i> 价值&#8593;
                     </a>
                     <button class="btn btn-outline-success" onclick="exportToBibTeX()" title="导出为 BibTeX 格式">
                         <i class="bi bi-file-earmark-code"></i> BibTeX
@@ -209,7 +219,12 @@
                         {% endif %}
                         {% if paper.llm_score is not none %}
                         <span class="badge bg-success" title="LLM相关度评分">
-                            <i class="bi bi-bar-chart-fill"></i> {{ paper.llm_score }}/100
+                            <i class="bi bi-bullseye"></i> 相关度 {{ paper.llm_score }}/100
+                        </span>
+                        {% endif %}
+                        {% if paper.llm_value_score is not none %}
+                        <span class="badge bg-info text-dark" title="LLM价值评分">
+                            <i class="bi bi-gem"></i> 价值 {{ paper.llm_value_score }}/100
                         </span>
                         {% endif %}
                     </div>
@@ -1515,9 +1530,21 @@ function editSingleDomain(domainId) {
 // 加载预设prompt
 function loadPresetPrompt(presetKey) {
     const presetPrompts = {
-        'smart_contract_repair': `You are an academic research assistant specializing in blockchain security. Evaluate the relevance of the following paper to: Automated smart contract vulnerability repair using multi-agent systems, LLM-based software engineering, and the analysis of real-world DeFi exploit incidents. Score from 0 to 100. Return ONLY the integer score.`,
-        'llm_automation': `You are an academic research assistant specializing in AI and software engineering. Evaluate the relevance of the following paper to: Multi-agent systems, automated program repair, LLM-based code generation, and intelligent software engineering. Score from 0 to 100. Return ONLY the integer score.`,
-        'general_cs': `You are an academic research assistant. Evaluate the research value and quality of the following computer science paper. Consider: novelty, methodology rigor, experimental validation, and contribution to the field. Score from 0 to 100. Return ONLY the integer score.`
+        'smart_contract_repair': `You are an academic research assistant specializing in blockchain security. Evaluate the following paper on two dimensions:
+1. Relevance (相关性): How relevant the paper is to: Automated smart contract vulnerability repair using multi-agent systems, LLM-based software engineering, and the analysis of real-world DeFi exploit incidents. Score from 0 to 100.
+2. Value (价值): Academic merit including novelty, innovation, technical soundness, and practical applicability in blockchain security. Score from 0 to 100.
+
+Return your response in the format: "Relevance: XX, Value: YY". Return ONLY the scores.`,
+        'llm_automation': `You are an academic research assistant specializing in AI and software engineering. Evaluate the following paper on two dimensions:
+1. Relevance (相关性): How relevant the paper is to: Multi-agent systems, automated program repair, LLM-based code generation, and intelligent software engineering. Score from 0 to 100.
+2. Value (价值): Academic merit including novelty, innovation, technical soundness, and contribution to AI/SE research. Score from 0 to 100.
+
+Return your response in the format: "Relevance: XX, Value: YY". Return ONLY the scores.`,
+        'general_cs': `You are an academic research assistant. Evaluate the following computer science paper on two dimensions:
+1. Relevance (相关性): General relevance to computer science research and current trends in the field. Score from 0 to 100.
+2. Value (价值): Academic merit including novelty, methodology rigor, experimental validation, and contribution to the field. Score from 0 to 100.
+
+Return your response in the format: "Relevance: XX, Value: YY". Return ONLY the scores.`
     };
     document.getElementById('editDomainPrompt').value = presetPrompts[presetKey];
 }
@@ -1678,7 +1705,154 @@ async function saveAndRescoreDomain() {
 document.addEventListener('DOMContentLoaded', function() {
     updateEditDomainButton();
 });
+
+// ============== 统计功能 ==============
+
+// 显示统计信息
+async function showStats() {
+    const statsBtn = document.querySelector('[onclick="showStats()"]');
+    statsBtn.disabled = true;
+    statsBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> 加载中...';
+
+    try {
+        const response = await fetch('/api/stats');
+        const stats = await response.json();
+
+        // 构建统计信息HTML
+        let statsHtml = '<div class="row">';
+
+        // 整体统计
+        statsHtml += `
+            <div class="col-md-6 mb-3">
+                <div class="card">
+                    <div class="card-header bg-primary text-white">
+                        <h6 class="mb-0"><i class="bi bi-graph-up"></i> 整体统计</h6>
+                    </div>
+                    <div class="card-body">
+                        <table class="table table-sm">
+                            <tbody>
+                                <tr>
+                                    <td><strong>总论文数</strong></td>
+                                    <td class="text-end">${stats.total_papers}</td>
+                                </tr>
+                                <tr>
+                                    <td><strong>研究领域</strong></td>
+                                    <td class="text-end">${stats.total_domains}</td>
+                                </tr>
+                            </tbody>
+                        </table>
+
+                        <h6 class="mt-3 mb-2">数据源分布</h6>
+                        <div class="d-flex flex-wrap gap-2">
+                            ${Object.entries(stats.by_source).map(([source, count]) => `
+                                <span class="badge bg-secondary">
+                                    ${source.toUpperCase()}: ${count}
+                                </span>
+                            `).join('')}
+                        </div>
+
+                        <h6 class="mt-3 mb-2">年份分布 (Top 5)</h6>
+                        <div class="d-flex flex-wrap gap-2">
+                            ${Object.entries(stats.by_year).slice(0, 5).map(([year, count]) => `
+                                <span class="badge bg-info">
+                                    ${year}: ${count}
+                                </span>
+                            `).join('')}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        // 各领域统计
+        statsHtml += `
+            <div class="col-md-6 mb-3">
+                <div class="card">
+                    <div class="card-header bg-success text-white">
+                        <h6 class="mb-0"><i class="bi bi-list"></i> 各领域统计</h6>
+                    </div>
+                    <div class="card-body" style="max-height: 400px; overflow-y: auto;">
+        `;
+
+        if (stats.domains && stats.domains.length > 0) {
+            statsHtml += '<div class="list-group list-group-flush">';
+            stats.domains.forEach(domain => {
+                statsHtml += `
+                    <div class="list-group-item">
+                        <div class="d-flex justify-content-between align-items-start mb-2">
+                            <strong>${domain.name}</strong>
+                            <span class="badge bg-primary">${domain.total} 篇</span>
+                        </div>
+                        <div class="mb-2">
+                            <small class="text-muted">数据源：</small>
+                            <div class="d-flex flex-wrap gap-1 mt-1">
+                                ${Object.entries(domain.by_source).filter(([s, c]) => c > 0).map(([source, count]) => `
+                                    <span class="badge bg-secondary" style="font-size: 0.75rem;">${source}: ${count}</span>
+                                `).join('')}
+                            </div>
+                        </div>
+                        <div>
+                            <small class="text-muted">平均评分：</small>
+                            <div class="d-flex gap-1 mt-1">
+                                ${domain.avg_relevance !== null
+                                    ? `<span class="badge bg-success" title="平均相关度">相关度 ${domain.avg_relevance}/100</span>`
+                                    : '<span class="text-muted">无相关度</span>'}
+                                ${domain.avg_value !== null
+                                    ? `<span class="badge bg-info text-dark" title="平均价值">价值 ${domain.avg_value}/100</span>`
+                                    : '<span class="text-muted">无价值评分</span>'}
+                            </div>
+                        </div>
+                    </div>
+                `;
+            });
+            statsHtml += '</div>';
+        } else {
+            statsHtml += '<p class="text-muted text-center my-3">暂无领域数据</p>';
+        }
+
+        statsHtml += `
+                    </div>
+                </div>
+            </div>
+        `;
+
+        statsHtml += '</div>';
+
+        // 更新模态框内容
+        document.getElementById('statsModalContent').innerHTML = statsHtml;
+
+        // 显示模态框
+        const modal = new bootstrap.Modal(document.getElementById('statsModal'));
+        modal.show();
+
+    } catch (err) {
+        showToast('加载统计失败: ' + err.message, 'error');
+    } finally {
+        statsBtn.disabled = false;
+        statsBtn.innerHTML = '<i class="bi bi-bar-chart"></i> 查看统计';
+    }
+}
 </script>
+
+<!-- 统计信息模态框 -->
+<div class="modal fade" id="statsModal" tabindex="-1">
+    <div class="modal-dialog modal-xl">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">
+                    <i class="bi bi-bar-chart"></i> 论文统计信息
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body" id="statsModalContent">
+                <!-- 统计内容由JavaScript动态生成 -->
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">关闭</button>
+            </div>
+        </div>
+    </div>
+</div>
 
 <!-- 领域编辑模态框 -->
 <div class="modal fade" id="editDomainModal" tabindex="-1">

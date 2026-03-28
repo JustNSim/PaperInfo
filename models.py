@@ -104,6 +104,7 @@ class Paper(db.Model):
     fetched_date = db.Column(db.DateTime, default=datetime.utcnow, index=True)
     is_favorite = db.Column(db.Boolean, default=False, index=True)  # 是否收藏
     llm_score = db.Column(db.Integer, nullable=True)  # LLM 相关度评分 (0-100)
+    llm_value_score = db.Column(db.Integer, nullable=True)  # LLM 价值评分 (0-100)
 
     # 外键关联
     domain_id = db.Column(db.Integer, db.ForeignKey('domains.id'), nullable=False, index=True)
@@ -137,7 +138,8 @@ class Paper(db.Model):
             'fetched_date': self.fetched_date.isoformat() if self.fetched_date else None,
             'domain_id': self.domain_id,
             'is_favorite': self.is_favorite,
-            'llm_score': self.llm_score
+            'llm_score': self.llm_score,
+            'llm_value_score': self.llm_value_score
         }
 
     @staticmethod

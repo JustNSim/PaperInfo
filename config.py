@@ -60,10 +60,13 @@ class Config:
 
     # 通用默认prompt（适用于所有学术领域）
     LLM_DEFAULT_PROMPT = (
-        "You are an academic research assistant. Evaluate the research value and relevance "
-        "of the following paper. Consider factors such as: novelty of the approach, technical "
-        "soundness, practical applicability, and alignment with current research trends. "
-        "Score the relevance from 0 to 100. Return ONLY the integer score."
+        "You are an academic research assistant. Evaluate the following paper on two dimensions:\n"
+        "1. Relevance (相关性): How relevant the paper is to the research area and topics of interest. "
+        "Consider keyword matching, domain alignment, and subject matter relevance. Score from 0 to 100.\n"
+        "2. Value (价值): Academic merit including novelty, innovation, technical soundness, "
+        "practical applicability, and significance to the broader research community. Score from 0 to 100.\n\n"
+        "Return your response in the format: \"Relevance: XX, Value: YY\" where XX and YY are "
+        "integer scores. Return ONLY the scores, no other text."
     )
 
     # 环境变量自定义prompt（优先级最高）
@@ -73,22 +76,32 @@ class Config:
     LLM_DOMAIN_PROMPTS = {
         'smart_contract_repair': (
             "You are an academic research assistant specializing in blockchain security. "
-            "Evaluate the relevance of the following paper to: Automated smart contract "
+            "Evaluate the following paper on two dimensions:\n"
+            "1. Relevance (相关性): How relevant the paper is to: Automated smart contract "
             "vulnerability repair using multi-agent systems, LLM-based software engineering, "
-            "and the analysis of real-world DeFi exploit incidents. Score from 0 to 100. "
-            "Return ONLY the integer score."
+            "and the analysis of real-world DeFi exploit incidents. Score from 0 to 100.\n"
+            "2. Value (价值): Academic merit including novelty, innovation, technical soundness, "
+            "and practical applicability in blockchain security. Score from 0 to 100.\n\n"
+            "Return your response in the format: \"Relevance: XX, Value: YY\". Return ONLY the scores."
         ),
         'llm_automation': (
             "You are an academic research assistant specializing in AI and software engineering. "
-            "Evaluate the relevance of the following paper to: Multi-agent systems, automated "
+            "Evaluate the following paper on two dimensions:\n"
+            "1. Relevance (相关性): How relevant the paper is to: Multi-agent systems, automated "
             "program repair, LLM-based code generation, and intelligent software engineering. "
-            "Score from 0 to 100. Return ONLY the integer score."
+            "Score from 0 to 100.\n"
+            "2. Value (价值): Academic merit including novelty, innovation, technical soundness, "
+            "and contribution to AI/SE research. Score from 0 to 100.\n\n"
+            "Return your response in the format: \"Relevance: XX, Value: YY\". Return ONLY the scores."
         ),
         'general_cs': (
-            "You are an academic research assistant. Evaluate the research value and quality "
-            "of the following computer science paper. Consider: novelty, methodology rigor, "
-            "experimental validation, and contribution to the field. Score from 0 to 100. "
-            "Return ONLY the integer score."
+            "You are an academic research assistant. Evaluate the following computer science paper "
+            "on two dimensions:\n"
+            "1. Relevance (相关性): General relevance to computer science research and current "
+            "trends in the field. Score from 0 to 100.\n"
+            "2. Value (价值): Academic merit including novelty, methodology rigor, experimental "
+            "validation, and contribution to the field. Score from 0 to 100.\n\n"
+            "Return your response in the format: \"Relevance: XX, Value: YY\". Return ONLY the scores."
         )
     }
 

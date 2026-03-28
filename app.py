@@ -112,6 +112,10 @@ def register_routes(app):
             query = query.order_by(Paper.llm_score.desc().nulls_last(), Paper.published_date.desc())
         elif sort == 'score_asc':
             query = query.order_by(Paper.llm_score.asc().nulls_last(), Paper.published_date.desc())
+        elif sort == 'value_desc':
+            query = query.order_by(Paper.llm_value_score.desc().nulls_last(), Paper.published_date.desc())
+        elif sort == 'value_asc':
+            query = query.order_by(Paper.llm_value_score.asc().nulls_last(), Paper.published_date.desc())
         else:  # date
             query = query.order_by(Paper.published_date.desc())
 
@@ -188,6 +192,10 @@ def register_routes(app):
             query = query.order_by(Paper.llm_score.desc().nulls_last(), Paper.published_date.desc())
         elif sort_by == 'score_asc':
             query = query.order_by(Paper.llm_score.asc().nulls_last(), Paper.published_date.desc())
+        elif sort_by == 'value_desc':
+            query = query.order_by(Paper.llm_value_score.desc().nulls_last(), Paper.published_date.desc())
+        elif sort_by == 'value_asc':
+            query = query.order_by(Paper.llm_value_score.asc().nulls_last(), Paper.published_date.desc())
         else:  # date (默认)
             query = query.order_by(Paper.published_date.desc())
 
@@ -322,15 +330,19 @@ def register_routes(app):
 
                     # 更新评分
                     old_score = paper.llm_score
-                    paper.llm_score = result.score
+                    old_value_score = paper.llm_value_score
+                    paper.llm_score = result.relevance_score
+                    paper.llm_value_score = result.value_score
 
                     results['success'] += 1
                     results['updated'].append({
                         'id': paper.id,
                         'title': paper.title[:50],
                         'status': 'updated',
-                        'old_score': old_score,
-                        'new_score': result.score
+                        'old_relevance': old_score,
+                        'old_value': old_value_score,
+                        'new_relevance': result.relevance_score,
+                        'new_value': result.value_score
                     })
 
                 except LLMEvaluatorError as e:
@@ -402,27 +414,76 @@ def register_routes(app):
     @app.route('/api/stats')
     def api_stats():
         """API: 统计信息"""
+        # 整体统计
         stats = {
             'total_papers': Paper.query.count(),
             'total_domains': Domain.query.count(),
             'by_source': {},
             'by_year': {},
-            'recent_papers': []
+            'recent_papers': [],
+            'domains': []
         }
 
-        # 按数据源统计
-        for source in ['arxiv', 'dblp']:
+        # 按数据源统计（整体）
+        for source in ['arxiv', 'dblp', 's2']:
             stats['by_source'][source] = Paper.query.filter_by(source=source).count()
 
-        # 按年份统计
+        # 按年份统计（整体）
         papers_by_year = db.session.query(
             Paper.year, db.func.count(Paper.id)
         ).filter(Paper.year.isnot(None)).group_by(Paper.year).order_by(Paper.year.desc()).limit(10).all()
         stats['by_year'] = {str(year): count for year, count in papers_by_year}
 
-        # 最近论文
+        # 最近论文（整体）
         recent = Paper.query.order_by(Paper.published_date.desc()).limit(5).all()
         stats['recent_papers'] = [p.to_dict() for p in recent]
+
+        # 各领域详细统计
+        domains = Domain.query.filter_by(enabled=True).all()
+        for domain in domains:
+            domain_papers = Paper.query.filter_by(domain_id=domain.id)
+
+            # 按数据源统计
+            by_source = {}
+            for source in ['arxiv', 'dblp', 's2']:
+                by_source[source] = domain_papers.filter_by(source=source).count()
+
+            # 按年份统计
+            by_year = db.session.query(
+                Paper.year, db.func.count(Paper.id)
+            ).filter(
+                Paper.domain_id == domain.id,
+                Paper.year.isnot(None)
+            ).group_by(Paper.year).order_by(Paper.year.desc()).limit(5).all()
+            by_year_dict = {str(year): count for year, count in by_year}
+
+            # 评分统计
+            avg_relevance = db.session.query(
+                db.func.avg(Paper.llm_score)
+            ).filter(
+                Paper.domain_id == domain.id,
+                Paper.llm_score.isnot(None)
+            ).scalar()
+            avg_relevance = int(avg_relevance) if avg_relevance else None
+
+            avg_value = db.session.query(
+                db.func.avg(Paper.llm_value_score)
+            ).filter(
+                Paper.domain_id == domain.id,
+                Paper.llm_value_score.isnot(None)
+            ).scalar()
+            avg_value = int(avg_value) if avg_value else None
+
+            stats['domains'].append({
+                'id': domain.id,
+                'name': domain.name,
+                'total': domain_papers.count(),
+                'by_source': by_source,
+                'by_year': by_year_dict,
+                'avg_relevance': avg_relevance,
+                'avg_value': avg_value,
+                'enabled': domain.enabled
+            })
 
         return jsonify(stats)
 

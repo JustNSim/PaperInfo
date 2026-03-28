@@ -342,6 +342,7 @@ def _save_papers(papers: list, domain: Domain) -> int:
 
             # LLM 相关性评估
             llm_score = None
+            llm_value_score = None
             if evaluator:
                 eval_result = evaluator.evaluate(
                     title=paper_data.get('title', ''),
@@ -352,15 +353,16 @@ def _save_papers(papers: list, domain: Domain) -> int:
                     logger.warning(f"LLM 评估出错，跳过论文: {paper_data.get('title', '')[:50]} - {eval_result.error}")
                     continue
 
-                llm_score = eval_result.score
+                llm_score = eval_result.relevance_score
+                llm_value_score = eval_result.value_score
 
-                if eval_result.score < Config.LLM_FILTER_THRESHOLD:
-                    logger.debug(f"LLM 评分 {eval_result.score} < {Config.LLM_FILTER_THRESHOLD}，跳过: {paper_data.get('title', '')[:50]}")
+                if eval_result.relevance_score < Config.LLM_FILTER_THRESHOLD:
+                    logger.debug(f"LLM 相关度评分 {eval_result.relevance_score} < {Config.LLM_FILTER_THRESHOLD}，跳过: {paper_data.get('title', '')[:50]}")
                     global llm_filtered_count
                     llm_filtered_count += 1
                     continue
 
-                logger.info(f"LLM 评分 {eval_result.score} >= {Config.LLM_FILTER_THRESHOLD}，通过: {paper_data.get('title', '')[:50]}")
+                logger.info(f"LLM 相关度={eval_result.relevance_score}, 价值={eval_result.value_score} >= {Config.LLM_FILTER_THRESHOLD}，通过: {paper_data.get('title', '')[:50]}")
 
             # 创建新论文对象
             paper = Paper(
@@ -375,7 +377,8 @@ def _save_papers(papers: list, domain: Domain) -> int:
                 pdf_url=paper_data.get('pdf_url'),
                 published_date=paper_data.get('published_date'),
                 domain_id=domain.id,
-                llm_score=llm_score
+                llm_score=llm_score,
+                llm_value_score=llm_value_score
             )
 
             batch.append(paper)
