@@ -40,20 +40,26 @@ def create_app(config_name='default'):
 
 
 def _init_default_domains():
-    """初始化默认领域"""
+    """初始化默认领域 - 仅在数据库为空时（首次安装）执行"""
+    # 检查是否已有任何领域
+    existing_count = Domain.query.count()
+    if existing_count > 0:
+        # 已有领域数据，跳过初始化
+        return
+
+    # 数据库为空，创建默认领域
     for domain_config in Config.DEFAULT_DOMAINS:
-        existing = Domain.query.filter_by(name=domain_config['name']).first()
-        if not existing:
-            domain = Domain(
-                name=domain_config['name'],
-                keywords=domain_config['keywords'],
-                arxiv_categories=domain_config.get('arxiv_categories', []),
-                ccf_venues=domain_config.get('ccf_venues', []),
-                enabled=True
-            )
-            db.session.add(domain)
+        domain = Domain(
+            name=domain_config['name'],
+            keywords=domain_config['keywords'],
+            arxiv_categories=domain_config.get('arxiv_categories', []),
+            ccf_venues=domain_config.get('ccf_venues', []),
+            enabled=True
+        )
+        db.session.add(domain)
     try:
         db.session.commit()
+        print(f"首次安装：已创建 {len(Config.DEFAULT_DOMAINS)} 个默认领域")
     except Exception as e:
         db.session.rollback()
         print(f"初始化默认领域时出错: {e}")
