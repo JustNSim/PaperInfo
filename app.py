@@ -403,7 +403,13 @@ def register_routes(app):
 
     @app.route('/api/domains/<int:domain_id>/rescore-stream', methods=['POST'])
     def api_rescore_domain_papers_stream(domain_id):
-        """API: 重新评分该领域的所有论文（流式进度推送）"""
+        """API: 重新评分该领域的所有论文（流式进度推送）
+
+        特性：
+        - 每评估完一篇论文立即保存，防止中断丢失结果
+        - 使用并行评估提升速度
+        - 实时推送进度更新
+        """
         domain = Domain.query.get_or_404(domain_id)
 
         def generate_progress():
@@ -423,6 +429,8 @@ def register_routes(app):
                 from scheduler import _get_llm_evaluator
                 from llm import LLMEvaluatorError
                 from concurrent.futures import ThreadPoolExecutor, as_completed
+                import queue
+                import threading
 
                 evaluator = _get_llm_evaluator(domain)
 
@@ -440,55 +448,122 @@ def register_routes(app):
                 data = f"data: {json.dumps({'type': 'start', 'total': total})}\n\n"
                 yield data
 
-                # 使用串行评估以确保进度实时更新
-                # 并行评估会导致事件缓冲，无法实时显示进度
-                for i, paper in enumerate(papers, 1):
+                # 使用线程安全队列收集结果
+                result_queue = queue.Queue()
+
+                # 使用并行评估
+                max_workers = min(Config.LLM_MAX_WORKERS, total)
+                logger.info(f"使用 {max_workers} 个worker并行评估 {total} 篇论文")
+
+                def evaluate_and_save(paper, index):
+                    """评估单篇论文并立即保存"""
                     try:
                         result = _evaluate_single_paper({
                             'title': paper.title,
                             'abstract': paper.abstract or ''
                         }, evaluator, domain.id)
 
-                        progress_data = {
-                            'type': 'progress',
-                            'current': i,
-                            'total': total,
-                            'percent': int(i / total * 100),
-                            'paper_id': paper.id,
-                            'title': paper.title[:50]
-                        }
-
                         if result['success'] and not result.get('filtered'):
-                            # 更新评分
+                            # 立即更新评分到数据库
                             paper.llm_score = result.get('llm_score')
                             paper.llm_value_score = result.get('llm_value_score')
-                            success_count += 1
 
-                            progress_data['relevance'] = result.get('llm_score')
-                            progress_data['value'] = result.get('llm_value_score')
+                            # 立即提交这一篇的更改
+                            db.session.commit()
 
+                            result_queue.put({
+                                'index': index,
+                                'success': True,
+                                'paper_id': paper.id,
+                                'title': paper.title[:50],
+                                'relevance': result.get('llm_score'),
+                                'value': result.get('llm_value_score')
+                            })
                         elif result.get('error'):
-                            failed_count += 1
-                            progress_data['error'] = result.get('error')
-
-                        data = f"data: {json.dumps(progress_data)}\n\n"
-                        yield data
-
+                            result_queue.put({
+                                'index': index,
+                                'success': False,
+                                'paper_id': paper.id,
+                                'title': paper.title[:50],
+                                'error': result.get('error')
+                            })
+                        else:
+                            # 被过滤的论文
+                            result_queue.put({
+                                'index': index,
+                                'success': True,
+                                'filtered': True,
+                                'paper_id': paper.id,
+                                'title': paper.title[:50]
+                            })
                     except Exception as e:
-                        failed_count += 1
-                        data = f"data: {json.dumps({
-                            'type': 'progress',
-                            'current': i,
-                            'total': total,
-                            'percent': int(i / total * 100),
+                        result_queue.put({
+                            'index': index,
+                            'success': False,
                             'paper_id': paper.id,
                             'title': paper.title[:50],
                             'error': str(e)
-                        })}\n\n"
-                        yield data
+                        })
 
-                # 提交更改
-                db.session.commit()
+                # 使用线程池并行评估
+                with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                    # 提交所有任务
+                    futures = {
+                        executor.submit(evaluate_and_save, paper, i): paper
+                        for i, paper in enumerate(papers, 1)
+                    }
+
+                    # 收集完成的任务并按顺序发送进度
+                    completed_indices = set()
+                    total_completed = 0
+
+                    while len(completed_indices) < len(futures):
+                        # 检查队列中的结果
+                        try:
+                            result = result_queue.get(timeout=0.1)
+                            completed_indices.add(result['index'])
+                            total_completed += 1
+
+                            if result.get('filtered'):
+                                # 被过滤的论文
+                                data = f"data: {json.dumps({
+                                    'type': 'progress',
+                                    'current': total_completed,
+                                    'total': total,
+                                    'percent': int(total_completed / total * 100),
+                                    'paper_id': result.get('paper_id'),
+                                    'title': result.get('title'),
+                                    'filtered': True
+                                })}\n\n"
+                            elif not result.get('success'):
+                                failed_count += 1
+                                data = f"data: {json.dumps({
+                                    'type': 'progress',
+                                    'current': total_completed,
+                                    'total': total,
+                                    'percent': int(total_completed / total * 100),
+                                    'paper_id': result.get('paper_id'),
+                                    'title': result.get('title'),
+                                    'error': result.get('error')
+                                })}\n\n"
+                            else:
+                                success_count += 1
+                                data = f"data: {json.dumps({
+                                    'type': 'progress',
+                                    'current': total_completed,
+                                    'total': total,
+                                    'percent': int(total_completed / total * 100),
+                                    'paper_id': result.get('paper_id'),
+                                    'title': result.get('title'),
+                                    'relevance': result.get('relevance'),
+                                    'value': result.get('value')
+                                })}\n\n"
+
+                            yield data
+
+                        except queue.Empty:
+                            # 队列为空，继续等待
+                            continue
 
                 # 记录重新评分操作到更新日志
                 try:

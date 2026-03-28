@@ -87,7 +87,7 @@ class OpenAIProvider(BaseLLMProvider):
                     {"role": "user", "content": user_prompt}
                 ],
                 temperature=0,
-                max_tokens=10
+                max_tokens=50
             )
 
             content = response.choices[0].message.content.strip()
@@ -289,7 +289,7 @@ class ZhipuProvider(BaseLLMProvider):
                     {"role": "user", "content": user_prompt}
                 ],
                 temperature=0,
-                max_tokens=10
+                max_tokens=50
             )
 
             content = response.choices[0].message.content.strip()
@@ -401,7 +401,7 @@ class CustomOpenAIProvider(BaseLLMProvider):
                     {"role": "user", "content": user_prompt}
                 ],
                 temperature=0,
-                max_tokens=10
+                max_tokens=50
             )
 
             content = response.choices[0].message.content.strip()
