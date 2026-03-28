@@ -385,10 +385,41 @@ def register_routes(app):
             return jsonify({'success': False, 'message': '请选择要删除的论文'}), 400
 
         try:
+            # 获取要删除的论文信息（用于记录日志）
+            papers_to_delete = Paper.query.filter(Paper.id.in_(paper_ids)).all()
+
+            # 按来源和领域统计
+            source_stats = {}
+            domain_stats = {}
+            for paper in papers_to_delete:
+                source = paper.source
+                source_stats[source] = source_stats.get(source, 0) + 1
+                domain_id = paper.domain_id
+                domain_stats[domain_id] = domain_stats.get(domain_id, 0) + 1
+
+            # 执行删除
             count = Paper.query.filter(Paper.id.in_(paper_ids)).delete(
                 synchronize_session=False
             )
             db.session.commit()
+
+            # 记录删除操作到更新日志
+            log = UpdateLog(
+                trigger_type='papers_deleted',
+                total_new=0,
+                arxiv_new=0,
+                dblp_new=0,
+                source_stats={
+                    'deleted_papers': count,
+                    'by_source': source_stats,
+                    'by_domain': domain_stats
+                },
+                domains_processed=list(domain_stats.keys()),
+                status='success'
+            )
+            db.session.add(log)
+            db.session.commit()
+
             return jsonify({
                 'success': True,
                 'message': f'已删除 {count} 篇论文',

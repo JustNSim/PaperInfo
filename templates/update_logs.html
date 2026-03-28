@@ -40,7 +40,7 @@
                             </thead>
                             <tbody>
                                 {% for log in logs %}
-                                <tr class="{% if log.status == 'failed' %}table-danger{% elif log.trigger_type == 'data_cleared' %}table-warning{% endif %}">
+                                <tr class="{% if log.status == 'failed' %}table-danger{% elif log.trigger_type == 'data_cleared' %}table-warning{% elif log.trigger_type == 'papers_deleted' %}table-secondary{% endif %}">
                                     <td>
                                         <small>{{ log.trigger_time.strftime('%Y-%m-%d %H:%M:%S') }}</small>
                                     </td>
@@ -57,11 +57,17 @@
                                         <span class="badge bg-warning">
                                             <i class="bi bi-trash3"></i> 清空
                                         </span>
+                                        {% elif log.trigger_type == 'papers_deleted' %}
+                                        <span class="badge bg-secondary">
+                                            <i class="bi bi-x-circle"></i> 删除
+                                        </span>
                                         {% endif %}
                                     </td>
                                     <td>
                                         {% if log.trigger_type == 'data_cleared' %}
                                         <span class="badge bg-warning text-dark">已清空</span>
+                                        {% elif log.trigger_type == 'papers_deleted' %}
+                                        <span class="badge bg-secondary">已删除</span>
                                         {% elif log.status == 'success' %}
                                         <span class="badge bg-success">成功</span>
                                         {% elif log.status == 'failed' %}
@@ -77,17 +83,28 @@
                                             清空了 {{ log.source_stats.cleared_papers }} 篇论文
                                             {% if log.source_stats.cleared_domains %}和 {{ log.source_stats.cleared_domains }} 个领域{% endif %}
                                         </small>
+                                        {% elif log.trigger_type == 'papers_deleted' %}
+                                        <small class="text-secondary">
+                                            <i class="bi bi-x-circle"></i>
+                                            删除了 {{ log.source_stats.deleted_papers }} 篇论文
+                                        </small>
                                         {% else %}
                                         <strong class="text-primary">{{ log.total_new }}</strong> 篇新增
                                         {% endif %}
                                     </td>
                                     <td>
                                         <small>
-                                            {% if log.trigger_type == 'data_cleared' %}
+                                            {% if log.trigger_type == 'data_cleared' or log.trigger_type == 'papers_deleted' %}
+                                            {% if log.source_stats.by_source %}
+                                            {% for source, count in log.source_stats.by_source.items() %}
+                                            <span class="badge bg-secondary me-1">{{ source }}: {{ count }}</span>
+                                            {% endfor %}
+                                            {% else %}
                                             <span class="text-muted">-</span>
+                                            {% endif %}
                                             {% elif log.source_stats %}
                                             {% for source, count in log.source_stats.items() %}
-                                            {% if source not in ['cleared_papers', 'cleared_domains'] %}
+                                            {% if source not in ['cleared_papers', 'cleared_domains', 'deleted_papers', 'by_source', 'by_domain'] %}
                                             <span class="badge bg-secondary me-1">{{ source }}: {{ count }}</span>
                                             {% endif %}
                                             {% endfor %}
@@ -98,8 +115,14 @@
                                     </td>
                                     <td>
                                         <small>
-                                            {% if log.trigger_type == 'data_cleared' %}
+                                            {% if log.trigger_type == 'data_cleared' or log.trigger_type == 'papers_deleted' %}
+                                            {% if log.source_stats.by_domain %}
+                                            {% for domain_id, count in log.source_stats.by_domain.items() %}
+                                            <span class="badge bg-light text-dark me-1">{{ domain_names.get(domain_id, domain_id) }}: {{ count }}</span>
+                                            {% endfor %}
+                                            {% else %}
                                             <span class="text-muted">-</span>
+                                            {% endif %}
                                             {% elif log.domains_processed %}
                                             {% for domain_id in log.domains_processed %}
                                             <span class="badge bg-light text-dark me-1">{{ domain_names.get(domain_id, domain_id) }}</span>
@@ -112,6 +135,10 @@
                                     <td>
                                         {% if log.trigger_type == 'data_cleared' %}
                                         <button class="btn btn-sm btn-outline-primary" onclick="triggerFetch()">
+                                            <i class="bi bi-arrow-clockwise"></i> 恢复
+                                        </button>
+                                        {% elif log.trigger_type == 'papers_deleted' %}
+                                        <button class="btn btn-sm btn-outline-secondary" onclick="triggerFetch()">
                                             <i class="bi bi-arrow-clockwise"></i> 恢复
                                         </button>
                                         {% endif %}
@@ -189,8 +216,10 @@
                 <div class="col-md-3">
                     <div class="card text-center">
                         <div class="card-body">
-                            <h6 class="card-subtitle mb-2 text-muted">数据清空</h6>
-                            <h3 class="card-title text-warning">{{ logs|selectattr('trigger_type', 'equalto', 'data_cleared')|list|length }} 次</h3>
+                            <h6 class="card-subtitle mb-2 text-muted">清空/删除</h6>
+                            <h3 class="card-title text-warning">
+                                {{ logs|selectattr('trigger_type', 'equalto', 'data_cleared')|list|length + logs|selectattr('trigger_type', 'equalto', 'papers_deleted')|list|length }} 次
+                            </h3>
                         </div>
                     </div>
                 </div>
@@ -201,6 +230,8 @@
                             <p class="card-text small text-muted">
                                 {% if logs[0].trigger_type == 'data_cleared' %}
                                 <span class="text-warning">清空数据</span>
+                                {% elif logs[0].trigger_type == 'papers_deleted' %}
+                                <span class="text-secondary">删除论文</span>
                                 {% else %}
                                 抓取成功
                                 {% endif %}
