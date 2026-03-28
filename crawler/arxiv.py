@@ -17,12 +17,12 @@ class ArxivCrawler(BaseCrawler):
     """arXiv API 爬虫"""
 
     ARXIV_API_URL = 'http://export.arxiv.org/api/query'
-    # 关键词分批查询：每批查询的关键词数量
-    KEYWORD_BATCH_SIZE = 10
+    # 关键词分批查询：每批查询的关键词数量（减少批次避免429）
+    KEYWORD_BATCH_SIZE = 15
     # 每批查询获取的最大结果数
     MAX_RESULTS_PER_BATCH = 100
     # 最低相关性分数（0-100）
-    MIN_RELEVANCE_SCORE = 10
+    MIN_RELEVANCE_SCORE = 5  # 降低阈值，5分即可通过
 
     def __init__(self, delay: float = 3.0, timeout: int = 30, max_results: int = 100):
         super().__init__(delay=delay, timeout=timeout)

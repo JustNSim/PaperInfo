@@ -108,15 +108,29 @@ class DBLPCrawler(BaseCrawler):
             data = response.json()
             papers = []
 
-            if 'result' in data and 'hits' in data['result']:
-                hits = data['result']['hits']['hit']
-                if not isinstance(hits, list):
-                    hits = [hits]
+            # 检查是否有结果
+            if 'result' not in data:
+                logger.debug(f"DBLP venue '{venue}' 无结果")
+                return papers
 
-                for hit in hits:
-                    paper = self._parse_venue_entry(hit, venue, from_year, to_year)
-                    if paper:
-                        papers.append(paper)
+            hits_data = data['result'].get('hits', {})
+            if not hits_data:
+                logger.debug(f"DBLP venue '{venue}' hits 为空")
+                return papers
+
+            # 获取 hit 列表
+            hits = hits_data.get('hit')
+            if not hits:
+                logger.debug(f"DBLP venue '{venue}' 没有命中")
+                return papers
+
+            if not isinstance(hits, list):
+                hits = [hits]
+
+            for hit in hits:
+                paper = self._parse_venue_entry(hit, venue, from_year, to_year)
+                if paper:
+                    papers.append(paper)
 
             return papers
 
@@ -170,15 +184,18 @@ class DBLPCrawler(BaseCrawler):
 
             # 解析结果
             all_papers = []
-            if 'result' in data and 'hits' in data['result']:
-                hits = data['result']['hits']['hit']
-                if not isinstance(hits, list):
-                    hits = [hits]
+            if 'result' in data:
+                hits_data = data['result'].get('hits', {})
+                if hits_data:
+                    hits = hits_data.get('hit')
+                    if hits:
+                        if not isinstance(hits, list):
+                            hits = [hits]
 
-                for hit in hits:
-                    paper = self._parse_entry(hit, from_year, to_year)
-                    if paper:
-                        all_papers.append(paper)
+                        for hit in hits:
+                            paper = self._parse_entry(hit, from_year, to_year)
+                            if paper:
+                                all_papers.append(paper)
 
             logger.info(f"从 DBLP 获取到 {len(all_papers)} 篇论文")
             return all_papers
