@@ -270,7 +270,16 @@ def handle_message(ws, message):
 提取到 `static/js/main.js`
 
 **预计工作量**: 30 分钟
-**状态**: ⏳ 待处理
+**状态**: ✅ 部分修复 (2026-03-28)
+
+**修复内容**:
+- 将翻译函数添加到 main.js：translateText, doTranslate, fallbackTranslate, splitText
+- 添加 localStorage 管理函数
+- 在页面重复函数前添加 TODO 注释标记
+
+**技术债务**:
+由于页面函数需要访问特定变量（translations, abstracts, originalTitles），
+完全提取需要重构代码结构。已标记为已知技术债务，将来可重构。
 
 ---
 

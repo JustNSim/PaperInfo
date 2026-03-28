@@ -64,6 +64,10 @@ class Paper(db.Model):
     # 唯一约束：同一数据源下标题唯一
     __table_args__ = (
         db.UniqueConstraint('source', 'title', name='uq_source_title'),
+        db.Index('idx_source_date', 'source', 'published_date'),
+        db.Index('idx_favorite_date', 'is_favorite', 'published_date'),
+        db.Index('idx_domain_source', 'domain_id', 'source'),
+        db.Index('idx_year_source', 'year', 'source'),
     )
 
     def __repr__(self):

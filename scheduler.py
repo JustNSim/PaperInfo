@@ -293,9 +293,19 @@ def setup_scheduler(app=None):
     """
     global scheduler
 
-    if scheduler is not None:
-        logger.warning("调度器已经运行")
+    # 检查调度器是否已经存在并正在运行
+    if scheduler is not None and scheduler.running:
+        logger.warning("调度器已经在运行，跳过重复启动")
         return scheduler
+
+    # 如果调度器存在但未运行，先关闭它
+    if scheduler is not None and not scheduler.running:
+        try:
+            scheduler.shutdown(wait=False)
+            logger.info("关闭旧的调度器实例")
+        except Exception as e:
+            logger.warning(f"关闭旧调度器时出错: {e}")
+        scheduler = None
 
     # 配置执行器
     executors = {
