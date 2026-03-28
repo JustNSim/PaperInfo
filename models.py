@@ -107,6 +107,7 @@ class Paper(db.Model):
 
     # 外键关联
     domain_id = db.Column(db.Integer, db.ForeignKey('domains.id'), nullable=False, index=True)
+    domain = db.relationship('Domain', backref=db.backref('papers', lazy='dynamic'))
 
     # 唯一约束：同一数据源下标题唯一
     __table_args__ = (

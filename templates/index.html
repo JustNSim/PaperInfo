@@ -15,15 +15,15 @@
                 <div class="mb-3">
                     <div class="d-flex justify-content-between align-items-center mb-2">
                         <label class="form-label fw-bold mb-0">研究领域</label>
-                        <button class="btn btn-sm btn-outline-primary" onclick="editSelectedDomain()" id="editDomainBtn" title="编辑选中领域的配置">
+                        <button class="btn btn-sm btn-outline-primary" onclick="editSelectedDomain()" id="editDomainBtn" title="编辑领域配置">
                             <i class="bi bi-gear"></i> 编辑
                         </button>
                     </div>
                     <select class="form-select" id="domainFilter" name="domain" onchange="updateEditDomainButton()">
                         <option value="">全部领域</option>
                         {% for domain in domains %}
-                        <option value="{{ domain.id }}" data-prompt="{{ domain.llm_prompt or '' }}" {% if domain_id == domain.id %}selected{% endif %}>
-                            {{ domain.name }} ({{ domain.paper_count }})
+                        <option value="{{ domain.id }}" data-name="{{ domain.name }}" data-prompt="{{ domain.llm_prompt or '' }}" data-count="{{ domain.paper_count }}" {% if domain_id == domain.id %}selected{% endif %}>
+                            {{ domain.name }}
                         </option>
                         {% endfor %}
                     </select>
@@ -124,11 +124,16 @@
             </div>
             <!-- 批量操作栏 -->
             <div class="d-flex justify-content-between align-items-center border-top pt-2">
-                <div class="form-check">
-                    <input class="form-check-input" type="checkbox" id="selectAll" onchange="toggleSelectAll()">
-                    <label class="form-check-label ms-2" for="selectAll">
-                        全选 (<span id="selectedCount">0</span>/{{ total }})
-                    </label>
+                <div class="d-flex align-items-center gap-3">
+                    <div class="form-check mb-0">
+                        <input class="form-check-input" type="checkbox" id="selectAll" onchange="toggleSelectAll()">
+                        <label class="form-check-label ms-2" for="selectAll">
+                            全选当前页
+                        </label>
+                    </div>
+                    <small class="text-muted">
+                        已选: <strong><span id="selectedCount">0</span></strong> / 本页: <strong>{{ papers|length }}</strong> / 总计: <strong>{{ total }}</strong>
+                    </small>
                 </div>
                 <div class="btn-group btn-group-sm">
                     <button class="btn btn-outline-warning" onclick="batchFavorite()" id="batchFavBtn" disabled>
@@ -185,6 +190,11 @@
 
                     <!-- 元信息 -->
                     <div class="mb-2">
+                        {% if paper.domain %}
+                        <span class="badge bg-dark" title="所属领域">
+                            <i class="bi bi-folder"></i> {{ paper.domain.name }}
+                        </span>
+                        {% endif %}
                         <span class="badge bg-primary">{{ paper.source }}</span>
                         {% if paper.venue %}
                         <span class="badge bg-secondary">{{ paper.venue }}</span>
@@ -1117,11 +1127,8 @@ function clearSelection() {
 function updateEditDomainButton() {
     const select = document.getElementById('domainFilter');
     const editBtn = document.getElementById('editDomainBtn');
-    if (select.value) {
-        editBtn.disabled = false;
-    } else {
-        editBtn.disabled = true;
-    }
+    // 始终启用编辑按钮（包括"全部领域"）
+    editBtn.disabled = false;
 }
 
 // 编辑选中的领域
@@ -1130,19 +1137,68 @@ function editSelectedDomain() {
     const domainId = select.value;
 
     if (!domainId) {
-        showToast('请先选择一个领域', 'warning');
-        return;
+        // 显示所有领域的列表
+        showAllDomainsList();
+    } else {
+        // 编辑单个领域
+        editSingleDomain(domainId);
+    }
+}
+
+// 显示所有领域列表
+function showAllDomainsList() {
+    const select = document.getElementById('domainFilter');
+    let domainsHtml = '<div class="list-group">';
+
+    for (let i = 1; i < select.options.length; i++) {
+        const option = select.options[i];
+        const domainId = option.value;
+        const domainName = option.getAttribute('data-name');
+        const paperCount = option.getAttribute('data-count');
+
+        domainsHtml += `
+            <div class="list-group-item list-group-item-action d-flex justify-content-between align-items-center">
+                <div>
+                    <strong>${domainName}</strong>
+                    <span class="badge bg-secondary ms-2">${paperCount} 篇</span>
+                </div>
+                <button class="btn btn-sm btn-outline-primary" onclick='editSingleDomain("${domainId}")'>
+                    <i class="bi bi-pencil"></i> 编辑
+                </button>
+            </div>
+        `;
     }
 
-    // 获取选中领域的prompt
-    const selectedOption = select.options[select.selectedIndex];
-    const currentPrompt = selectedOption.getAttribute('data-prompt') || '';
+    domainsHtml += '</div>';
 
-    // 显示编辑模态框
-    const domainName = selectedOption.text.split(' (')[0];
-    document.getElementById('editDomainName').textContent = domainName;
-    document.getElementById('editDomainId').value = domainId;
-    document.getElementById('editDomainPrompt').value = currentPrompt;
+    // 更新模态框内容为领域列表视图
+    document.getElementById('editDomainModalContent').innerHTML = `
+        <div class="modal-header">
+            <h5 class="modal-title">
+                <i class="bi bi-list"></i> 所有领域
+            </h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+            ${domainsHtml}
+        </div>
+        <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">关闭</button>
+        </div>
+    `;
+
+    // 显示模态框
+    const modal = new bootstrap.Modal(document.getElementById('editDomainModal'));
+    modal.show();
+}
+
+// 编辑单个领域
+function editSingleDomain(domainId) {
+    const select = document.getElementById('domainFilter');
+    const selectedOption = select.querySelector(`option[value="${domainId}"]`);
+
+    const domainName = selectedOption.getAttribute('data-name');
+    const currentPrompt = selectedOption.getAttribute('data-prompt') || '';
 
     // 显示预设prompt选项
     const presetPrompts = {
@@ -1151,15 +1207,69 @@ function editSelectedDomain() {
         'general_cs': '通用计算机科学 - 评估论文的学术价值、创新性、方法严谨性等'
     };
 
-    let presetHtml = '<div class="mb-3"><label class="form-label text-muted">预设模板（点击使用）:</label><div class="d-flex flex-wrap gap-2">';
+    let presetHtml = '<div class="mb-2"><label class="form-label text-muted small">预设模板（点击使用）:</label><div class="d-flex flex-wrap gap-2">';
     for (const [key, label] of Object.entries(presetPrompts)) {
         presetHtml += `<button type="button" class="btn btn-sm btn-outline-secondary" onclick="loadPresetPrompt('${key}')">${label}</button>`;
     }
     presetHtml += '</div></div>';
-    document.getElementById('presetPromptOptions').innerHTML = presetHtml;
 
-    // 显示模态框
-    const modal = new bootstrap.Modal(document.getElementById('editDomainModal'));
+    // 更新模态框内容为单个领域编辑视图
+    document.getElementById('editDomainModalContent').innerHTML = `
+        <div class="modal-header">
+            <h5 class="modal-title">
+                <i class="bi bi-gear"></i> 编辑领域配置
+            </h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+            <input type="hidden" id="editDomainId" value="${domainId}">
+
+            <div class="mb-3">
+                <label for="editDomainNameInput" class="form-label">
+                    <i class="bi bi-tag"></i> 领域名称
+                </label>
+                <input type="text" class="form-control" id="editDomainNameInput" value="${domainName}" placeholder="输入领域名称">
+            </div>
+
+            <div id="presetPromptOptions">${presetHtml}</div>
+
+            <div class="mb-3">
+                <label for="editDomainPrompt" class="form-label">
+                    <i class="bi bi-chat-text"></i> LLM评估Prompt
+                </label>
+                <textarea class="form-control font-monospace" id="editDomainPrompt" rows="8"
+                    placeholder="留空使用全局默认prompt...">${currentPrompt}</textarea>
+                <div class="form-text">
+                    <i class="bi bi-info-circle"></i>
+                    此prompt用于评估该领域论文的相关度。留空则使用全局默认prompt。
+                </div>
+            </div>
+
+            <div class="alert alert-info small">
+                <strong><i class="bi bi-lightbulb"></i> 提示：</strong>
+                <ul class="mb-0 mt-2">
+                    <li>描述该领域的研究方向和关注点</li>
+                    <li>指定评估论文相关度时需要考虑的因素</li>
+                    <li>要求LLM返回0-100的整数评分</li>
+                </ul>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+            <button type="button" class="btn btn-primary" onclick="saveDomainConfig()" id="savePromptBtn">
+                <i class="bi bi-check-circle"></i> 保存
+            </button>
+            <button type="button" class="btn btn-success" onclick="saveAndRescoreDomain()" id="saveAndRescoreBtn">
+                <i class="bi bi-arrow-clockwise"></i> 保存并重新评分
+            </button>
+        </div>
+    `;
+
+    // 如果模态框还没打开，则打开它
+    let modal = bootstrap.Modal.getInstance(document.getElementById('editDomainModal'));
+    if (!modal) {
+        modal = new bootstrap.Modal(document.getElementById('editDomainModal'));
+    }
     modal.show();
 }
 
@@ -1173,20 +1283,31 @@ function loadPresetPrompt(presetKey) {
     document.getElementById('editDomainPrompt').value = presetPrompts[presetKey];
 }
 
-// 保存领域prompt
-async function saveDomainPrompt() {
+// 保存领域配置
+async function saveDomainConfig() {
     const domainId = document.getElementById('editDomainId').value;
+    const domainName = document.getElementById('editDomainNameInput').value.trim();
     const prompt = document.getElementById('editDomainPrompt').value.trim();
     const saveBtn = document.getElementById('savePromptBtn');
+
+    if (!domainName) {
+        showToast('领域名称不能为空', 'warning');
+        return;
+    }
 
     saveBtn.disabled = true;
     saveBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> 保存中...';
 
     try {
+        const updateData = {
+            name: domainName,
+            llm_prompt: prompt || null
+        };
+
         const response = await fetch(`/api/domains/${domainId}`, {
             method: 'PATCH',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({llm_prompt: prompt || null})
+            body: JSON.stringify(updateData)
         });
 
         const data = await response.json();
@@ -1209,6 +1330,111 @@ async function saveDomainPrompt() {
     }
 }
 
+// 保存并重新评分
+async function saveAndRescoreDomain() {
+    const domainId = document.getElementById('editDomainId').value;
+    const domainName = document.getElementById('editDomainNameInput').value.trim();
+    const prompt = document.getElementById('editDomainPrompt').value.trim();
+    const saveBtn = document.getElementById('savePromptBtn');
+    const rescoreBtn = document.getElementById('saveAndRescoreBtn');
+
+    if (!domainName) {
+        showToast('领域名称不能为空', 'warning');
+        return;
+    }
+
+    // 确认是否重新评分
+    const confirmRescore = confirm(
+        '保存并重新评分该领域的所有论文？\n\n' +
+        '这将使用新的prompt重新评估该领域的所有论文，可能需要较长时间。\n\n' +
+        '是否继续？'
+    );
+    if (!confirmRescore) {
+        return;
+    }
+
+    // 首先保存配置
+    saveBtn.disabled = true;
+    rescoreBtn.disabled = true;
+    rescoreBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> 处理中...';
+
+    try {
+        // 1. 保存配置
+        const updateData = {
+            name: domainName,
+            llm_prompt: prompt || null
+        };
+
+        const saveResponse = await fetch(`/api/domains/${domainId}`, {
+            method: 'PATCH',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(updateData)
+        });
+
+        const saveData = await saveResponse.json();
+
+        if (!saveData.success) {
+            showToast('保存失败: ' + saveData.message, 'error');
+            saveBtn.disabled = false;
+            rescoreBtn.disabled = false;
+            rescoreBtn.innerHTML = '<i class="bi bi-arrow-clockwise"></i> 保存并重新评分';
+            return;
+        }
+
+        // 2. 重新评分
+        rescoreBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> 正在重新评分...';
+
+        const rescoreResponse = await fetch(`/api/domains/${domainId}/rescore`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'}
+        });
+
+        const rescoreData = await rescoreResponse.json();
+
+        if (rescoreData.success) {
+            showToast(rescoreData.message, 'success');
+
+            // 显示详细结果
+            if (rescoreData.results && rescoreData.results.updated) {
+                const results = rescoreData.results;
+                let resultMsg = `重新评分完成！\n\n`;
+                resultMsg += `总计: ${results.total} 篇\n`;
+                resultMsg += `成功: ${results.success} 篇\n`;
+                resultMsg += `失败: ${results.failed} 篇\n\n`;
+
+                // 显示分数变化详情
+                const updated = results.updated.filter(r => r.status === 'updated');
+                if (updated.length > 0) {
+                    resultMsg += `评分变化示例:\n`;
+                    updated.slice(0, 5).forEach(r => {
+                        resultMsg += `  • ${r.title}: ${r.old_score} → ${r.new_score}\n`;
+                    });
+                    if (updated.length > 5) {
+                        resultMsg += `  ... 还有 ${updated.length - 5} 篇\n`;
+                    }
+                }
+
+                alert(resultMsg);
+            }
+
+            // 关闭模态框并刷新页面
+            const modal = bootstrap.Modal.getInstance(document.getElementById('editDomainModal'));
+            modal.hide();
+            setTimeout(() => location.reload(), 1000);
+        } else {
+            showToast('重新评分失败: ' + rescoreData.message, 'error');
+        }
+
+    } catch (err) {
+        showToast('操作失败: ' + err.message, 'error');
+    } finally {
+        saveBtn.disabled = false;
+        rescoreBtn.disabled = false;
+        saveBtn.innerHTML = '<i class="bi bi-check-circle"></i> 保存';
+        rescoreBtn.innerHTML = '<i class="bi bi-arrow-clockwise"></i> 保存并重新评分';
+    }
+}
+
 // 页面加载时初始化编辑按钮状态
 document.addEventListener('DOMContentLoaded', function() {
     updateEditDomainButton();
@@ -1218,47 +1444,8 @@ document.addEventListener('DOMContentLoaded', function() {
 <!-- 领域编辑模态框 -->
 <div class="modal fade" id="editDomainModal" tabindex="-1">
     <div class="modal-dialog modal-lg">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h5 class="modal-title">
-                    <i class="bi bi-gear"></i> 编辑领域配置
-                    <span class="text-muted fs-6"> - <span id="editDomainName"></span></span>
-                </h5>
-                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-            </div>
-            <div class="modal-body">
-                <input type="hidden" id="editDomainId">
-
-                <div id="presetPromptOptions"></div>
-
-                <div class="mb-3">
-                    <label for="editDomainPrompt" class="form-label">
-                        <i class="bi bi-chat-text"></i> LLM评估Prompt
-                    </label>
-                    <textarea class="form-control font-monospace" id="editDomainPrompt" rows="8"
-                        placeholder="留空使用全局默认prompt..."></textarea>
-                    <div class="form-text">
-                        <i class="bi bi-info-circle"></i>
-                        此prompt用于评估该领域论文的相关度。留空则使用全局默认prompt。
-                    </div>
-                </div>
-
-                <div class="alert alert-info">
-                    <strong><i class="bi bi-lightbulb"></i> 提示：</strong>
-                    <ul class="mb-0 mt-2">
-                        <li>描述该领域的研究方向和关注点</li>
-                        <li>指定评估论文相关度时需要考虑的因素</li>
-                        <li>要求LLM返回0-100的整数评分</li>
-                        <li>使用"Return ONLY the integer score"确保只返回分数</li>
-                    </ul>
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
-                <button type="button" class="btn btn-primary" onclick="saveDomainPrompt()" id="savePromptBtn">
-                    <i class="bi bi-check-circle"></i> 保存
-                </button>
-            </div>
+        <div class="modal-content" id="editDomainModalContent">
+            <!-- 内容由JavaScript动态生成 -->
         </div>
     </div>
 </div>

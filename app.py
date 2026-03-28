@@ -274,6 +274,88 @@ def register_routes(app):
             db.session.rollback()
             return jsonify({'success': False, 'message': str(e)}), 500
 
+    @app.route('/api/domains/<int:domain_id>/rescore', methods=['POST'])
+    def api_rescore_domain_papers(domain_id):
+        """API: 重新评分该领域的所有论文"""
+        domain = Domain.query.get_or_404(domain_id)
+
+        try:
+            # 获取该领域的所有论文
+            papers = Paper.query.filter_by(domain_id=domain_id).all()
+
+            if not papers:
+                return jsonify({'success': False, 'message': '该领域没有论文'}), 400
+
+            # 导入评估器
+            from scheduler import _get_llm_evaluator
+            from llm import LLMEvaluatorError
+
+            evaluator = _get_llm_evaluator(domain)
+
+            if not evaluator:
+                return jsonify({'success': False, 'message': 'LLM评估器未启用'}), 400
+
+            results = {
+                'total': len(papers),
+                'success': 0,
+                'failed': 0,
+                'updated': []
+            }
+
+            for paper in papers:
+                try:
+                    # 评估论文
+                    result = evaluator.evaluate(
+                        title=paper.title,
+                        abstract=paper.abstract or ''
+                    )
+
+                    if result.error:
+                        results['failed'] += 1
+                        results['updated'].append({
+                            'id': paper.id,
+                            'title': paper.title[:50],
+                            'status': 'error',
+                            'message': result.error
+                        })
+                        continue
+
+                    # 更新评分
+                    old_score = paper.llm_score
+                    paper.llm_score = result.score
+
+                    results['success'] += 1
+                    results['updated'].append({
+                        'id': paper.id,
+                        'title': paper.title[:50],
+                        'status': 'updated',
+                        'old_score': old_score,
+                        'new_score': result.score
+                    })
+
+                except LLMEvaluatorError as e:
+                    results['failed'] += 1
+                    results['updated'].append({
+                        'id': paper.id,
+                        'title': paper.title[:50],
+                        'status': 'error',
+                        'message': str(e)
+                    })
+                    continue
+
+            # 提交更改
+            db.session.commit()
+
+            return jsonify({
+                'success': True,
+                'message': f'重新评分完成: 成功 {results["success"]} 篇, 失败 {results["failed"]} 篇',
+                'results': results
+            })
+
+        except Exception as e:
+            db.session.rollback()
+            return jsonify({'success': False, 'message': str(e)}), 500
+
     @app.route('/api/stats')
     def api_stats():
         """API: 统计信息"""
