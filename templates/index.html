@@ -1647,57 +1647,111 @@ async function saveAndRescoreDomain() {
             return;
         }
 
-        // 2. 重新评分
+        // 2. 使用流式API重新评分
         rescoreBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> 正在重新评分...';
 
-        const rescoreResponse = await fetch(`/api/domains/${domainId}/rescore`, {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'}
-        });
+        // 创建进度显示元素
+        const progressHtml = `
+            <div class="alert alert-info mt-2" id="rescoreProgress">
+                <div class="d-flex justify-content-between mb-1">
+                    <span id="rescoreStatus">准备评估...</span>
+                    <span id="rescoreCount">0/0</span>
+                </div>
+                <div class="progress" style="height: 20px;">
+                    <div id="rescoreProgressBar" class="progress-bar progress-bar-striped progress-bar-animated"
+                         role="progressbar" style="width: 0%">0%</div>
+                </div>
+                <small class="text-muted mt-1 d-block" id="rescoreCurrent"></small>
+            </div>
+        `;
 
-        const rescoreData = await rescoreResponse.json();
+        // 插入进度显示
+        const modalBody = document.querySelector('#editDomainModal .modal-body');
+        const existingProgress = document.getElementById('rescoreProgress');
+        if (!existingProgress) {
+            modalBody.insertAdjacentHTML('beforeend', progressHtml);
+        }
 
-        if (rescoreData.success) {
-            showToast(rescoreData.message, 'success');
+        // 使用fetch读取流式响应
+        try {
+            const response = await fetch(`/api/domains/${domainId}/rescore-stream`, {
+                method: 'POST'
+            });
 
-            // 显示详细结果
-            if (rescoreData.results && rescoreData.results.updated) {
-                const results = rescoreData.results;
-                let resultMsg = `重新评分完成！\n\n`;
-                resultMsg += `总计: ${results.total} 篇\n`;
-                resultMsg += `成功: ${results.success} 篇\n`;
-                resultMsg += `失败: ${results.failed} 篇\n\n`;
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
 
-                // 显示分数变化详情
-                const updated = results.updated.filter(r => r.status === 'updated');
-                if (updated.length > 0) {
-                    resultMsg += `评分变化示例:\n`;
-                    updated.slice(0, 5).forEach(r => {
-                        resultMsg += `  • ${r.title}: ${r.old_score} → ${r.new_score}\n`;
-                    });
-                    if (updated.length > 5) {
-                        resultMsg += `  ... 还有 ${updated.length - 5} 篇\n`;
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+
+                const chunk = decoder.decode(value);
+                const lines = chunk.split('\n');
+
+                for (const line of lines) {
+                    if (line.startsWith('data: ')) {
+                        try {
+                            const data = JSON.parse(line.slice(6));
+
+                            if (data.type === 'start') {
+                                document.getElementById('rescoreStatus').textContent = '正在评估论文...';
+                                document.getElementById('rescoreCount').textContent = `0/${data.total}`;
+                            } else if (data.type === 'progress') {
+                                const percent = data.percent;
+                                const current = data.current;
+                                const total = data.total;
+
+                                document.getElementById('rescoreProgressBar').style.width = `${percent}%`;
+                                document.getElementById('rescoreProgressBar').textContent = `${percent}%`;
+                                document.getElementById('rescoreCount').textContent = `${current}/${total}`;
+
+                                if (data.relevance !== undefined && data.value !== undefined) {
+                                    document.getElementById('rescoreCurrent').textContent =
+                                        `${data.title} - 相关度: ${data.relevance}, 价值: ${data.value}`;
+                                } else if (data.error) {
+                                    document.getElementById('rescoreCurrent').textContent =
+                                        `${data.title} - 错误: ${data.error}`;
+                                } else {
+                                    document.getElementById('rescoreCurrent').textContent = data.title || '';
+                                }
+                            } else if (data.type === 'complete') {
+                                document.getElementById('rescoreStatus').textContent = '✅ 评估完成！';
+                                document.getElementById('rescoreProgressBar').classList.remove('progress-bar-animated');
+                                document.getElementById('rescoreProgressBar').classList.add('bg-success');
+
+                                showToast(`重新评分完成！成功: ${data.success} 篇, 失败: ${data.failed} 篇`, 'success');
+
+                                setTimeout(() => {
+                                    const modal = bootstrap.Modal.getInstance(document.getElementById('editDomainModal'));
+                                    modal.hide();
+                                    location.reload();
+                                }, 1500);
+                            } else if (data.type === 'error') {
+                                document.getElementById('rescoreStatus').textContent = '❌ 发生错误';
+                                document.getElementById('rescoreProgressBar').classList.add('bg-danger');
+                                showToast('重新评分失败: ' + data.message, 'error');
+                                saveBtn.disabled = false;
+                                rescoreBtn.disabled = false;
+                                rescoreBtn.innerHTML = '<i class="bi bi-arrow-clockwise"></i> 保存并重新评分';
+                                return;
+                            }
+                        } catch (e) {
+                            // Ignore JSON parse errors for incomplete chunks
+                        }
                     }
                 }
-
-                alert(resultMsg);
             }
-
-            // 关闭模态框并刷新页面
-            const modal = bootstrap.Modal.getInstance(document.getElementById('editDomainModal'));
-            modal.hide();
-            setTimeout(() => location.reload(), 1000);
-        } else {
-            showToast('重新评分失败: ' + rescoreData.message, 'error');
+        } catch (streamError) {
+            showToast('请求失败: ' + streamError.message, 'error');
+            saveBtn.disabled = false;
+            rescoreBtn.disabled = false;
+            rescoreBtn.innerHTML = '<i class="bi bi-arrow-clockwise"></i> 保存并重新评分';
         }
 
     } catch (err) {
         showToast('操作失败: ' + err.message, 'error');
     } finally {
         saveBtn.disabled = false;
-        rescoreBtn.disabled = false;
-        saveBtn.innerHTML = '<i class="bi bi-check-circle"></i> 保存';
-        rescoreBtn.innerHTML = '<i class="bi bi-arrow-clockwise"></i> 保存并重新评分';
     }
 }
 

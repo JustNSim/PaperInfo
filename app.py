@@ -4,13 +4,15 @@ PaperInfo - 论文调研工具
 """
 import os
 import json
+import queue
+import threading
 from datetime import datetime
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, render_template, request, jsonify, Response, stream_with_context
 from sqlalchemy.exc import IntegrityError
 
 from config import Config, config
 from models import db, Domain, Paper, UpdateLog
-from scheduler import setup_scheduler, manual_trigger_fetch, get_next_run_time
+from scheduler import setup_scheduler, manual_trigger_fetch, get_next_run_time, _evaluate_single_paper
 
 # 创建 Flask 应用
 def create_app(config_name='default'):
@@ -373,6 +375,169 @@ def register_routes(app):
         except Exception as e:
             db.session.rollback()
             return jsonify({'success': False, 'message': str(e)}), 500
+
+    @app.route('/api/domains/<int:domain_id>/rescore-stream', methods=['POST'])
+    def api_rescore_domain_papers_stream(domain_id):
+        """API: 重新评分该领域的所有论文（流式进度推送）"""
+        domain = Domain.query.get_or_404(domain_id)
+
+        def generate_progress():
+            """生成SSE进度事件"""
+            try:
+                # 获取该领域的所有论文
+                papers = Paper.query.filter_by(domain_id=domain_id).all()
+
+                if not papers:
+                    yield f"data: {json.dumps({'type': 'error', 'message': '该领域没有论文'})}\n\n"
+                    return
+
+                # 导入评估器和并行处理
+                from scheduler import _get_llm_evaluator
+                from llm import LLMEvaluatorError
+                from concurrent.futures import ThreadPoolExecutor, as_completed
+
+                evaluator = _get_llm_evaluator(domain)
+
+                if not evaluator:
+                    yield f"data: {json.dumps({'type': 'error', 'message': 'LLM评估器未启用'})}\n\n"
+                    return
+
+                total = len(papers)
+                success_count = 0
+                failed_count = 0
+
+                # 发送开始事件
+                yield f"data: {json.dumps({'type': 'start', 'total': total})}\n\n"
+
+                # 使用并行评估
+                max_workers = min(Config.LLM_MAX_WORKERS, total)
+                use_parallel = Config.LLM_PARALLEL_ENABLED and total > 1
+
+                if use_parallel:
+                    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                        future_to_paper = {
+                            executor.submit(_evaluate_single_paper, {
+                                'title': p.title,
+                                'abstract': p.abstract or ''
+                            }, evaluator, domain.id): p
+                            for p in papers
+                        }
+
+                        for i, future in enumerate(as_completed(future_to_paper), 1):
+                            paper = future_to_paper[future]
+                            try:
+                                result = future.result()
+
+                                if result['success'] and not result.get('filtered'):
+                                    # 更新评分
+                                    paper.llm_score = result.get('llm_score')
+                                    paper.llm_value_score = result.get('llm_value_score')
+                                    success_count += 1
+
+                                    yield f"data: {json.dumps({
+                                        'type': 'progress',
+                                        'current': i,
+                                        'total': total,
+                                        'percent': int(i / total * 100),
+                                        'paper_id': paper.id,
+                                        'title': paper.title[:50],
+                                        'relevance': result.get('llm_score'),
+                                        'value': result.get('llm_value_score')
+                                    })}\n\n"
+
+                                elif result.get('error'):
+                                    failed_count += 1
+                                    yield f"data: {json.dumps({
+                                        'type': 'progress',
+                                        'current': i,
+                                        'total': total,
+                                        'percent': int(i / total * 100),
+                                        'paper_id': paper.id,
+                                        'title': paper.title[:50],
+                                        'error': result.get('error')
+                                    })}\n\n"
+
+                            except Exception as e:
+                                failed_count += 1
+                                yield f"data: {json.dumps({
+                                    'type': 'progress',
+                                    'current': i,
+                                    'total': total,
+                                    'percent': int(i / total * 100),
+                                    'paper_id': paper.id,
+                                    'error': str(e)
+                                })}\n\n"
+
+                else:
+                    # 串行评估
+                    for i, paper in enumerate(papers, 1):
+                        try:
+                            result = _evaluate_single_paper({
+                                'title': paper.title,
+                                'abstract': paper.abstract or ''
+                            }, evaluator, domain.id)
+
+                            if result['success'] and not result.get('filtered'):
+                                paper.llm_score = result.get('llm_score')
+                                paper.llm_value_score = result.get('llm_value_score')
+                                success_count += 1
+
+                                yield f"data: {json.dumps({
+                                    'type': 'progress',
+                                    'current': i,
+                                    'total': total,
+                                    'percent': int(i / total * 100),
+                                    'paper_id': paper.id,
+                                    'title': paper.title[:50],
+                                    'relevance': result.get('llm_score'),
+                                    'value': result.get('llm_value_score')
+                                })}\n\n"
+
+                            elif result.get('error'):
+                                failed_count += 1
+                                yield f"data: {json.dumps({
+                                    'type': 'progress',
+                                    'current': i,
+                                    'total': total,
+                                    'percent': int(i / total * 100),
+                                    'paper_id': paper.id,
+                                    'error': result.get('error')
+                                })}\n\n"
+
+                        except Exception as e:
+                            failed_count += 1
+                            yield f"data: {json.dumps({
+                                'type': 'progress',
+                                'current': i,
+                                'total': total,
+                                'percent': int(i / total * 100),
+                                'paper_id': paper.id,
+                                'error': str(e)
+                            })}\n\n"
+
+                # 提交更改
+                db.session.commit()
+
+                # 发送完成事件
+                yield f"data: {json.dumps({
+                    'type': 'complete',
+                    'total': total,
+                    'success': success_count,
+                    'failed': failed_count
+                })}\n\n"
+
+            except Exception as e:
+                db.session.rollback()
+                yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+
+        return Response(
+            stream_with_context(generate_progress()),
+            mimetype='text/event-stream',
+            headers={
+                'Cache-Control': 'no-cache',
+                'X-Accel-Buffering': 'no'
+            }
+        )
 
     @app.route('/api/domains/<int:domain_id>/remove-only', methods=['DELETE'])
     def api_remove_domain_only(domain_id):
