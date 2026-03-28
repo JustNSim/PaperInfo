@@ -48,15 +48,21 @@ def _get_llm_evaluator():
 
     if llm_evaluator is None:
         try:
+            # 根据提供商选择正确的模型配置
+            if Config.LLM_PROVIDER == 'custom':
+                model = Config.CUSTOM_LLM_MODEL
+            else:
+                model = Config.LLM_MODEL
+
             llm_evaluator = LLMEvaluator(
                 provider=Config.LLM_PROVIDER,
                 api_key=Config.LLM_API_KEY,
-                model=Config.LLM_MODEL,
+                model=model,
                 delay=Config.LLM_DELAY,
                 system_prompt=Config.LLM_SYSTEM_PROMPT,
                 enabled=Config.LLM_FILTER_ENABLED
             )
-            logger.info(f"LLM 评估器已初始化: provider={Config.LLM_PROVIDER}")
+            logger.info(f"LLM 评估器已初始化: provider={Config.LLM_PROVIDER}, model={model}")
         except LLMEvaluatorError as e:
             logger.error(f"LLM 评估器初始化失败: {e}")
             logger.warning("LLM 过滤已禁用，将继续保存所有论文")

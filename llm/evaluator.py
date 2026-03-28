@@ -419,9 +419,6 @@ class LLMEvaluator:
             'custom': 'gpt-4o-mini'  # Will be overridden by CUSTOM_LLM_MODEL env var if set
         }
 
-        if model is None:
-            model = default_models.get(provider.lower())
-
         # Initialize provider (custom provider needs additional parameters)
         if provider.lower() == 'custom':
             base_url = os.environ.get('CUSTOM_LLM_BASE_URL', '')
@@ -429,8 +426,9 @@ class LLMEvaluator:
                 raise LLMEvaluatorError(
                     "CUSTOM_LLM_BASE_URL environment variable not set for custom provider"
                 )
+            # For custom provider, use CUSTOM_LLM_MODEL env var if model is not specified
             if model is None:
-                model = os.environ.get('CUSTOM_LLM_MODEL', 'gpt-4o-mini')
+                model = os.environ.get('CUSTOM_LLM_MODEL', default_models.get('custom'))
             self._provider = CustomOpenAIProvider(
                 api_key=api_key,
                 base_url=base_url,
@@ -438,6 +436,9 @@ class LLMEvaluator:
                 delay=delay
             )
         else:
+            # For standard providers, use default models if model is not specified
+            if model is None:
+                model = default_models.get(provider.lower())
             self._provider = provider_class(api_key=api_key, model=model, delay=delay)
 
         self.provider_name = provider.lower()
