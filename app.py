@@ -356,6 +356,49 @@ def register_routes(app):
             db.session.rollback()
             return jsonify({'success': False, 'message': str(e)}), 500
 
+    @app.route('/api/domains/<int:domain_id>/remove-only', methods=['DELETE'])
+    def api_remove_domain_only(domain_id):
+        """API: 仅删除领域定义，保留论文"""
+        domain = Domain.query.get_or_404(domain_id)
+
+        try:
+            # 获取该领域的论文数量
+            paper_count = Paper.query.filter_by(domain_id=domain_id).count()
+
+            # 取消论文与领域的关联
+            # 注意：我们需要设置domain_id为某个存在的领域ID，或者让该字段允许NULL
+            # 这里我们创建一个"未分类"领域，如果不存在的话
+            if paper_count > 0:
+                # 查找或创建"未分类"领域
+                uncategorized = Domain.query.filter_by(name='未分类').first()
+                if not uncategorized:
+                    uncategorized = Domain(
+                        name='未分类',
+                        keywords=[],
+                        arxiv_categories=[],
+                        ccf_venues=[],
+                        enabled=False
+                    )
+                    db.session.add(uncategorized)
+                    db.session.flush()  # 获取ID
+
+                # 将所有论文移到"未分类"领域
+                Paper.query.filter_by(domain_id=domain_id).update({'domain_id': uncategorized.id})
+
+            # 删除领域
+            db.session.delete(domain)
+            db.session.commit()
+
+            return jsonify({
+                'success': True,
+                'message': f'领域已删除，{paper_count} 篇论文已移至"未分类"',
+                'papers_moved': paper_count
+            })
+
+        except Exception as e:
+            db.session.rollback()
+            return jsonify({'success': False, 'message': str(e)}), 500
+
     @app.route('/api/stats')
     def api_stats():
         """API: 统计信息"""

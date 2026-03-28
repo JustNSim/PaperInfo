@@ -15,9 +15,14 @@
                 <div class="mb-3">
                     <div class="d-flex justify-content-between align-items-center mb-2">
                         <label class="form-label fw-bold mb-0">研究领域</label>
-                        <button class="btn btn-sm btn-outline-primary" onclick="editSelectedDomain()" id="editDomainBtn" title="编辑领域配置">
-                            <i class="bi bi-gear"></i> 编辑
-                        </button>
+                        <div class="btn-group btn-group-sm">
+                            <button class="btn btn-outline-success" onclick="addNewDomain()" title="新增领域">
+                                <i class="bi bi-plus-lg"></i> 新增
+                            </button>
+                            <button class="btn btn-outline-primary" onclick="editSelectedDomain()" id="editDomainBtn" title="编辑领域配置">
+                                <i class="bi bi-gear"></i> 编辑
+                            </button>
+                        </div>
                     </div>
                     <select class="form-select" id="domainFilter" name="domain" onchange="updateEditDomainButton()">
                         <option value="">全部领域</option>
@@ -1123,15 +1128,235 @@ function clearSelection() {
 
 // ============== 领域编辑功能 ==============
 
-// 更新编辑按钮状态
-function updateEditDomainButton() {
-    const select = document.getElementById('domainFilter');
-    const editBtn = document.getElementById('editDomainBtn');
-    // 始终启用编辑按钮（包括"全部领域"）
-    editBtn.disabled = false;
+// 新增领域
+function addNewDomain() {
+    // 显示预设prompt选项
+    const presetPrompts = {
+        'smart_contract_repair': '智能合约修复专用 - 针对区块链安全、智能合约漏洞修复、多智能体系统等方向',
+        'llm_automation': '大模型自动化 - 针对多智能体系统、自动程序修复、LLM代码生成等方向',
+        'general_cs': '通用计算机科学 - 评估论文的学术价值、创新性、方法严谨性等'
+    };
+
+    let presetHtml = '<div class="mb-2"><label class="form-label text-muted small">预设模板（点击使用）:</label><div class="d-flex flex-wrap gap-2">';
+    for (const [key, label] of Object.entries(presetPrompts)) {
+        presetHtml += `<button type="button" class="btn btn-sm btn-outline-secondary" onclick="loadPresetPrompt('${key}')">${label}</button>`;
+    }
+    presetHtml += '</div></div>';
+
+    // 更新模态框内容为新增领域视图
+    document.getElementById('editDomainModalContent').innerHTML = `
+        <div class="modal-header">
+            <h5 class="modal-title">
+                <i class="bi bi-plus-circle"></i> 新增领域
+            </h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+            <div class="mb-3">
+                <label for="newDomainNameInput" class="form-label">
+                    <i class="bi bi-tag"></i> 领域名称 <span class="text-danger">*</span>
+                </label>
+                <input type="text" class="form-control" id="newDomainNameInput" placeholder="输入领域名称">
+            </div>
+
+            <div class="mb-3">
+                <label for="newDomainKeywords" class="form-label">
+                    <i class="bi bi-keywords"></i> 关键词
+                </label>
+                <textarea class="form-control" id="newDomainKeywords" rows="3"
+                    placeholder="输入关键词，用逗号分隔（如：blockchain, smart contract, DeFi）"></textarea>
+                <div class="form-text">
+                    每行一个关键词或用逗号分隔，用于搜索相关论文
+                </div>
+            </div>
+
+            <div class="mb-3">
+                <label for="newDomainArxivCategories" class="form-label">
+                    <i class="bi bi-book"></i> arXiv分类
+                </label>
+                <input type="text" class="form-control" id="newDomainArxivCategories"
+                    placeholder="如：cs.CR, cs.DC（用逗号分隔）">
+            </div>
+
+            <div class="mb-3">
+                <label for="newDomainVenues" class="form-label">
+                    <i class="bi bi-building"></i> CCF会议/期刊
+                </label>
+                <input type="text" class="form-control" id="newDomainVenues"
+                    placeholder="如：IEEE S&P, ACM CCS（用逗号分隔）">
+            </div>
+
+            <div id="presetPromptOptions">${presetHtml}</div>
+
+            <div class="mb-3">
+                <label for="newDomainPrompt" class="form-label">
+                    <i class="bi bi-chat-text"></i> LLM评估Prompt
+                </label>
+                <textarea class="form-control font-monospace" id="newDomainPrompt" rows="6"
+                    placeholder="留空使用全局默认prompt..."></textarea>
+                <div class="form-text">
+                    <i class="bi bi-info-circle"></i>
+                    此prompt用于评估该领域论文的相关度。留空则使用全局默认prompt。
+                </div>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+            <button type="button" class="btn btn-success" onclick="createNewDomain()" id="createDomainBtn">
+                <i class="bi bi-check-circle"></i> 创建
+            </button>
+        </div>
+    `;
+
+    const modal = new bootstrap.Modal(document.getElementById('editDomainModal'));
+    modal.show();
 }
 
-// 编辑选中的领域
+// 创建新领域
+async function createNewDomain() {
+    const name = document.getElementById('newDomainNameInput').value.trim();
+    const keywordsStr = document.getElementById('newDomainKeywords').value.trim();
+    const arxivCategoriesStr = document.getElementById('newDomainArxivCategories').value.trim();
+    const venuesStr = document.getElementById('newDomainVenues').value.trim();
+    const prompt = document.getElementById('newDomainPrompt').value.trim();
+    const createBtn = document.getElementById('createDomainBtn');
+
+    if (!name) {
+        showToast('领域名称不能为空', 'warning');
+        return;
+    }
+
+    createBtn.disabled = true;
+    createBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> 创建中...';
+
+    try {
+        // 处理关键词
+        const keywords = keywordsStr
+            ? keywordsStr.split(/[,\n]+/).map(k => k.trim()).filter(k => k)
+            : [];
+
+        // 处理arXiv分类
+        const arxiv_categories = arxivCategoriesStr
+            ? arxivCategoriesStr.split(',').map(c => c.trim()).filter(c => c)
+            : [];
+
+        // 处理CCF会议/期刊
+        const ccf_venues = venuesStr
+            ? venuesStr.split(',').map(v => v.trim()).filter(v => v)
+            : [];
+
+        const response = await fetch('/api/domains', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                name: name,
+                keywords: keywords,
+                arxiv_categories: arxiv_categories,
+                ccf_venues: ccf_venues,
+                llm_prompt: prompt || null,
+                enabled: true
+            })
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            showToast('领域创建成功', 'success');
+            const modal = bootstrap.Modal.getInstance(document.getElementById('editDomainModal'));
+            modal.hide();
+            setTimeout(() => location.reload(), 500);
+        } else {
+            showToast('创建失败: ' + data.message, 'error');
+        }
+    } catch (err) {
+        showToast('创建失败: ' + err.message, 'error');
+    } finally {
+        createBtn.disabled = false;
+        createBtn.innerHTML = '<i class="bi bi-check-circle"></i> 创建';
+    }
+}
+
+// 删除领域
+async function deleteDomain(domainId, domainName) {
+    // 显示删除选项
+    const result = confirm(
+        `删除领域: "${domainName}"\n\n` +
+        `请选择删除方式：\n` +
+        `• 点击"确定"：删除领域及该领域的所有论文\n` +
+        `• 点击"取消"后可进入"仅删除领域"选项\n\n` +
+        `是否删除领域及论文？`
+    );
+
+    if (result) {
+        // 删除领域及论文
+        await confirmDeleteDomain(domainId, domainName, true);
+    } else {
+        // 询问是否仅删除领域
+        const keepPapers = confirm(
+            `是否仅删除领域定义（保留论文）？\n\n` +
+            `• 点击"确定"：仅删除领域定义，论文将被保留但不再关联到任何领域\n` +
+            `• 点击"取消"：取消删除操作`
+        );
+
+        if (keepPapers) {
+            await confirmDeleteDomain(domainId, domainName, false);
+        }
+    }
+}
+
+// 确认并执行删除
+async function confirmDeleteDomain(domainId, domainName, deletePapers) {
+    const action = deletePapers ? '删除领域及论文' : '仅删除领域（保留论文）';
+
+    if (!confirm(
+        `最后确认：\n\n` +
+        `即将${action}：\n` +
+        `领域：${domainName}\n\n` +
+        `此操作不可撤销！是否继续？`
+    )) {
+        return;
+    }
+
+    try {
+        if (deletePapers) {
+            // 删除领域及论文 - 使用现有的DELETE API
+            const response = await fetch(`/api/domains/${domainId}`, {
+                method: 'DELETE'
+            });
+            const data = await response.json();
+
+            if (data.success) {
+                showToast('领域及论文已删除', 'success');
+                const modal = bootstrap.Modal.getInstance(document.getElementById('editDomainModal'));
+                modal.hide();
+                setTimeout(() => location.reload(), 500);
+            } else {
+                showToast('删除失败: ' + data.message, 'error');
+            }
+        } else {
+            // 仅删除领域，保留论文
+            // 需要先取消论文与领域的关联，然后删除领域
+            const response = await fetch(`/api/domains/${domainId}/remove-only`, {
+                method: 'DELETE',
+                headers: {'Content-Type': 'application/json'}
+            });
+            const data = await response.json();
+
+            if (data.success) {
+                showToast('领域已删除，论文已保留', 'success');
+                const modal = bootstrap.Modal.getInstance(document.getElementById('editDomainModal'));
+                modal.hide();
+                setTimeout(() => location.reload(), 500);
+            } else {
+                showToast('删除失败: ' + data.message, 'error');
+            }
+        }
+    } catch (err) {
+        showToast('删除失败: ' + err.message, 'error');
+    }
+}
+
+// 更新编辑按钮状态
 function editSelectedDomain() {
     const select = document.getElementById('domainFilter');
     const domainId = select.value;
@@ -1157,14 +1382,21 @@ function showAllDomainsList() {
         const paperCount = option.getAttribute('data-count');
 
         domainsHtml += `
-            <div class="list-group-item list-group-item-action d-flex justify-content-between align-items-center">
-                <div>
-                    <strong>${domainName}</strong>
-                    <span class="badge bg-secondary ms-2">${paperCount} 篇</span>
+            <div class="list-group-item">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <strong>${domainName}</strong>
+                        <span class="badge bg-secondary ms-2">${paperCount} 篇</span>
+                    </div>
+                    <div class="btn-group btn-group-sm">
+                        <button class="btn btn-outline-primary" onclick='editSingleDomain("${domainId}")' title="编辑">
+                            <i class="bi bi-pencil"></i>
+                        </button>
+                        <button class="btn btn-outline-danger" onclick='deleteDomain("${domainId}", "${domainName}")' title="删除">
+                            <i class="bi bi-trash3"></i>
+                        </button>
+                    </div>
                 </div>
-                <button class="btn btn-sm btn-outline-primary" onclick='editSingleDomain("${domainId}")'>
-                    <i class="bi bi-pencil"></i> 编辑
-                </button>
             </div>
         `;
     }
@@ -1183,6 +1415,9 @@ function showAllDomainsList() {
             ${domainsHtml}
         </div>
         <div class="modal-footer">
+            <button type="button" class="btn btn-success" onclick="addNewDomain()">
+                <i class="bi bi-plus-circle"></i> 新增领域
+            </button>
             <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">关闭</button>
         </div>
     `;
@@ -1223,6 +1458,7 @@ function editSingleDomain(domainId) {
         </div>
         <div class="modal-body">
             <input type="hidden" id="editDomainId" value="${domainId}">
+            <input type="hidden" id="editDomainNameOriginal" value="${domainName}">
 
             <div class="mb-3">
                 <label for="editDomainNameInput" class="form-label">
@@ -1255,6 +1491,9 @@ function editSingleDomain(domainId) {
             </div>
         </div>
         <div class="modal-footer">
+            <button type="button" class="btn btn-outline-danger me-auto" onclick='deleteDomain("${domainId}", "${domainName}")'>
+                <i class="bi bi-trash3"></i> 删除领域
+            </button>
             <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
             <button type="button" class="btn btn-primary" onclick="saveDomainConfig()" id="savePromptBtn">
                 <i class="bi bi-check-circle"></i> 保存
