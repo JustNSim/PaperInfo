@@ -124,6 +124,18 @@
                     </button>
                 </div>
             </div>
+
+            <!-- 批量操作进度条 -->
+            <div id="batchProgressContainer" class="mt-2" style="display: none;">
+                <div class="d-flex justify-content-between align-items-center mb-1">
+                    <small class="text-muted" id="batchProgressText">处理中...</small>
+                    <small class="text-muted" id="batchProgressCount">0/0</small>
+                </div>
+                <div class="progress" style="height: 6px;">
+                    <div id="batchProgressBar" class="progress-bar progress-bar-striped progress-bar-animated bg-primary"
+                         role="progressbar" style="width: 0%"></div>
+                </div>
+            </div>
         </div>
 
         <!-- 论文卡片列表 -->
@@ -737,6 +749,55 @@ function showToast(message, type = 'info') {
 
 // ============== 批量操作功能 ==============
 
+// 进度条控制函数
+function showProgressBar(text, total) {
+    const container = document.getElementById('batchProgressContainer');
+    const progressBar = document.getElementById('batchProgressBar');
+    const progressText = document.getElementById('batchProgressText');
+    const progressCount = document.getElementById('batchProgressCount');
+
+    container.style.display = 'block';
+    progressText.textContent = text;
+    progressCount.textContent = `0/${total}`;
+    progressBar.style.width = '0%';
+    progressBar.className = 'progress-bar progress-bar-striped progress-bar-animated bg-primary';
+}
+
+function updateProgressBar(current, total) {
+    const progressBar = document.getElementById('batchProgressBar');
+    const progressCount = document.getElementById('batchProgressCount');
+    const percentage = Math.round((current / total) * 100);
+
+    progressBar.style.width = percentage + '%';
+    progressCount.textContent = `${current}/${total}`;
+}
+
+function hideProgressBar(success = true) {
+    const container = document.getElementById('batchProgressContainer');
+    const progressBar = document.getElementById('batchProgressBar');
+
+    progressBar.classList.remove('progress-bar-animated');
+
+    if (success) {
+        progressBar.classList.remove('bg-primary');
+        progressBar.classList.add('bg-success');
+        progressBar.style.width = '100%';
+        setTimeout(() => {
+            container.style.display = 'none';
+            progressBar.classList.remove('bg-success');
+            progressBar.classList.add('bg-primary');
+        }, 1000);
+    } else {
+        progressBar.classList.remove('bg-primary');
+        progressBar.classList.add('bg-danger');
+        setTimeout(() => {
+            container.style.display = 'none';
+            progressBar.classList.remove('bg-danger');
+            progressBar.classList.add('bg-primary');
+        }, 2000);
+    }
+}
+
 // 全选/取消全选
 function toggleSelectAll() {
     const selectAll = document.getElementById('selectAll');
@@ -778,10 +839,22 @@ async function batchFavorite() {
         return;
     }
 
+    // 显示进度条
+    showProgressBar('正在收藏...', paperIds.length);
+
     const btn = document.getElementById('batchFavBtn');
     const originalText = btn.innerHTML;
     btn.disabled = true;
     btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> 处理中...';
+
+    // 模拟进度更新（因为API是批量处理）
+    let progress = 0;
+    const progressInterval = setInterval(() => {
+        if (progress < paperIds.length - 1) {
+            progress++;
+            updateProgressBar(progress, paperIds.length);
+        }
+    }, 100);
 
     try {
         const response = await fetch('/api/batch/favorite', {
@@ -792,7 +865,11 @@ async function batchFavorite() {
 
         const data = await response.json();
 
+        clearInterval(progressInterval);
+        updateProgressBar(paperIds.length, paperIds.length);
+
         if (data.success) {
+            hideProgressBar(true);
             showToast(data.message, 'success');
             // 更新界面上的收藏状态
             paperIds.forEach(id => {
@@ -812,9 +889,12 @@ async function batchFavorite() {
             // 清除选择
             clearSelection();
         } else {
+            hideProgressBar(false);
             showToast(data.message, 'error');
         }
     } catch (err) {
+        clearInterval(progressInterval);
+        hideProgressBar(false);
         console.error('批量收藏失败:', err);
         showToast('操作失败，请稍后重试', 'error');
     } finally {
@@ -832,10 +912,22 @@ async function batchUnfavorite() {
         return;
     }
 
+    // 显示进度条
+    showProgressBar('正在取消收藏...', paperIds.length);
+
     const btn = document.getElementById('batchUnfavBtn');
     const originalText = btn.innerHTML;
     btn.disabled = true;
     btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> 处理中...';
+
+    // 模拟进度更新
+    let progress = 0;
+    const progressInterval = setInterval(() => {
+        if (progress < paperIds.length - 1) {
+            progress++;
+            updateProgressBar(progress, paperIds.length);
+        }
+    }, 100);
 
     try {
         const response = await fetch('/api/batch/unfavorite', {
@@ -846,7 +938,11 @@ async function batchUnfavorite() {
 
         const data = await response.json();
 
+        clearInterval(progressInterval);
+        updateProgressBar(paperIds.length, paperIds.length);
+
         if (data.success) {
+            hideProgressBar(true);
             showToast(data.message, 'success');
             // 更新界面上的收藏状态
             paperIds.forEach(id => {
@@ -861,9 +957,12 @@ async function batchUnfavorite() {
             // 清除选择
             clearSelection();
         } else {
+            hideProgressBar(false);
             showToast(data.message, 'error');
         }
     } catch (err) {
+        clearInterval(progressInterval);
+        hideProgressBar(false);
         console.error('批量取消收藏失败:', err);
         showToast('操作失败，请稍后重试', 'error');
     } finally {
@@ -894,10 +993,22 @@ function confirmBatchDelete() {
 
 // 执行批量删除
 async function batchDelete(paperIds) {
+    // 显示进度条
+    showProgressBar('正在删除...', paperIds.length);
+
     const btn = document.getElementById('batchDeleteBtn');
     const originalText = btn.innerHTML;
     btn.disabled = true;
     btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> 删除中...';
+
+    // 模拟进度更新
+    let progress = 0;
+    const progressInterval = setInterval(() => {
+        if (progress < paperIds.length - 1) {
+            progress++;
+            updateProgressBar(progress, paperIds.length);
+        }
+    }, 100);
 
     try {
         const response = await fetch('/api/batch/delete', {
@@ -908,7 +1019,11 @@ async function batchDelete(paperIds) {
 
         const data = await response.json();
 
+        clearInterval(progressInterval);
+        updateProgressBar(paperIds.length, paperIds.length);
+
         if (data.success) {
+            hideProgressBar(true);
             showToast(data.message, 'success');
             // 从界面上移除已删除的论文卡片
             paperIds.forEach(id => {
@@ -921,9 +1036,12 @@ async function batchDelete(paperIds) {
             // 延迟后刷新页面
             setTimeout(() => location.reload(), 1000);
         } else {
+            hideProgressBar(false);
             showToast(data.message, 'error');
         }
     } catch (err) {
+        clearInterval(progressInterval);
+        hideProgressBar(false);
         console.error('批量删除失败:', err);
         showToast('操作失败，请稍后重试', 'error');
     } finally {

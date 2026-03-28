@@ -32,6 +32,17 @@
                 </button>
             </div>
         </div>
+        <!-- 批量操作进度条 -->
+        <div id="batchProgressContainerFav" class="mt-2" style="display: none;">
+            <div class="d-flex justify-content-between align-items-center mb-1">
+                <small class="text-muted" id="batchProgressTextFav">处理中...</small>
+                <small class="text-muted" id="batchProgressCountFav">0/0</small>
+            </div>
+            <div class="progress" style="height: 6px;">
+                <div id="batchProgressBarFav" class="progress-bar progress-bar-striped progress-bar-animated bg-primary"
+                     role="progressbar" style="width: 0%"></div>
+            </div>
+        </div>
     </div>
 
     <!-- 论文列表 -->
@@ -245,6 +256,55 @@ function toggleAbstract(paperId) {
     }
 }
 
+// ============== 进度条控制函数 ==============
+function showProgressBarFav(text, total) {
+    const container = document.getElementById('batchProgressContainerFav');
+    const progressBar = document.getElementById('batchProgressBarFav');
+    const progressText = document.getElementById('batchProgressTextFav');
+    const progressCount = document.getElementById('batchProgressCountFav');
+
+    container.style.display = 'block';
+    progressText.textContent = text;
+    progressCount.textContent = `0/${total}`;
+    progressBar.style.width = '0%';
+    progressBar.className = 'progress-bar progress-bar-striped progress-bar-animated bg-primary';
+}
+
+function updateProgressBarFav(current, total) {
+    const progressBar = document.getElementById('batchProgressBarFav');
+    const progressCount = document.getElementById('batchProgressCountFav');
+    const percentage = Math.round((current / total) * 100);
+
+    progressBar.style.width = percentage + '%';
+    progressCount.textContent = `${current}/${total}`;
+}
+
+function hideProgressBarFav(success = true) {
+    const container = document.getElementById('batchProgressContainerFav');
+    const progressBar = document.getElementById('batchProgressBarFav');
+
+    progressBar.classList.remove('progress-bar-animated');
+
+    if (success) {
+        progressBar.classList.remove('bg-primary');
+        progressBar.classList.add('bg-success');
+        progressBar.style.width = '100%';
+        setTimeout(() => {
+            container.style.display = 'none';
+            progressBar.classList.remove('bg-success');
+            progressBar.classList.add('bg-primary');
+        }, 1000);
+    } else {
+        progressBar.classList.remove('bg-primary');
+        progressBar.classList.add('bg-danger');
+        setTimeout(() => {
+            container.style.display = 'none';
+            progressBar.classList.remove('bg-danger');
+            progressBar.classList.add('bg-primary');
+        }, 2000);
+    }
+}
+
 // 收藏页面特有函数
 function toggleSelectAllFav() {
     const selectAll = document.getElementById('selectAllFav');
@@ -285,10 +345,22 @@ async function batchUnfavoriteFav() {
         return;
     }
 
+    // 显示进度条
+    showProgressBarFav('正在取消收藏...', paperIds.length);
+
     const btn = document.getElementById('batchUnfavBtnFav');
     const originalText = btn.innerHTML;
     btn.disabled = true;
     btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> 处理中...';
+
+    // 模拟进度更新
+    let progress = 0;
+    const progressInterval = setInterval(() => {
+        if (progress < paperIds.length - 1) {
+            progress++;
+            updateProgressBarFav(progress, paperIds.length);
+        }
+    }, 100);
 
     try {
         const response = await fetch('/api/batch/unfavorite', {
@@ -299,7 +371,11 @@ async function batchUnfavoriteFav() {
 
         const data = await response.json();
 
+        clearInterval(progressInterval);
+        updateProgressBarFav(paperIds.length, paperIds.length);
+
         if (data.success) {
+            hideProgressBarFav(true);
             showToast(data.message, 'success');
             // 从界面上移除
             paperIds.forEach(id => {
@@ -311,9 +387,12 @@ async function batchUnfavoriteFav() {
             });
             setTimeout(() => location.reload(), 500);
         } else {
+            hideProgressBarFav(false);
             showToast(data.message, 'error');
         }
     } catch (err) {
+        clearInterval(progressInterval);
+        hideProgressBarFav(false);
         console.error('操作失败:', err);
         showToast('操作失败，请稍后重试', 'error');
     } finally {
@@ -334,7 +413,65 @@ function confirmBatchDeleteFav() {
         return;
     }
 
-    batchDelete(paperIds);
+    batchDeleteFav(paperIds);
+}
+
+// 执行批量删除（收藏页面专用）
+async function batchDeleteFav(paperIds) {
+    // 显示进度条
+    showProgressBarFav('正在删除...', paperIds.length);
+
+    const btn = document.getElementById('batchDeleteBtnFav');
+    const originalText = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> 删除中...';
+
+    // 模拟进度更新
+    let progress = 0;
+    const progressInterval = setInterval(() => {
+        if (progress < paperIds.length - 1) {
+            progress++;
+            updateProgressBarFav(progress, paperIds.length);
+        }
+    }, 100);
+
+    try {
+        const response = await fetch('/api/batch/delete', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({paper_ids: paperIds})
+        });
+
+        const data = await response.json();
+
+        clearInterval(progressInterval);
+        updateProgressBarFav(paperIds.length, paperIds.length);
+
+        if (data.success) {
+            hideProgressBarFav(true);
+            showToast(data.message, 'success');
+            // 从界面上移除
+            paperIds.forEach(id => {
+                const card = document.querySelector(`.paper-card[data-id="${id}"]`);
+                if (card) {
+                    card.style.opacity = '0.5';
+                    card.style.pointerEvents = 'none';
+                }
+            });
+            setTimeout(() => location.reload(), 500);
+        } else {
+            hideProgressBarFav(false);
+            showToast(data.message, 'error');
+        }
+    } catch (err) {
+        clearInterval(progressInterval);
+        hideProgressBarFav(false);
+        console.error('批量删除失败:', err);
+        showToast('操作失败，请稍后重试', 'error');
+    } finally {
+        btn.innerHTML = originalText;
+        btn.disabled = false;
+    }
 }
 
 async function singleUnfavorite(paperId) {
