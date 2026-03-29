@@ -56,6 +56,14 @@
                                         <span class="badge bg-success">
                                             <i class="bi bi-hand-index"></i> 手动
                                         </span>
+                                        {% elif log.trigger_type == 'rescore' %}
+                                        <span class="badge bg-primary">
+                                            <i class="bi bi-arrow-repeat"></i> 重评
+                                        </span>
+                                        {% elif log.trigger_type == 'delete_domain' %}
+                                        <span class="badge bg-danger">
+                                            <i class="bi bi-folder-x"></i> 删域
+                                        </span>
                                         {% elif log.trigger_type == 'data_cleared' %}
                                         <span class="badge bg-warning">
                                             <i class="bi bi-trash3"></i> 清空
@@ -90,6 +98,44 @@
                                         <small class="text-secondary">
                                             <i class="bi bi-x-circle"></i>
                                             删除了 {{ log.source_stats.deleted_papers }} 篇论文
+                                        </small>
+                                        {% elif log.trigger_type == 'rescore' %}
+                                        <small>
+                                            {% if log.operation_details %}
+                                            <span class="text-primary">
+                                                <i class="bi bi-arrow-repeat"></i>
+                                                重评: {{ log.operation_details.total|0 }} 篇
+                                            </span><br>
+                                            <span class="text-success">
+                                                保存: {{ log.operation_details.success_count|0 }}
+                                            </span>
+                                            {% if log.operation_details.filtered_count %}
+                                            <span class="text-warning">
+                                                过滤: {{ log.operation_details.filtered_count }}
+                                            </span>
+                                            {% endif %}
+                                            {% if log.operation_details.score_changed_count %}
+                                            <br><span class="text-info">
+                                                变化: {{ log.operation_details.score_changed_count }}
+                                            </span>
+                                            {% endif %}
+                                            {% else %}
+                                            <span class="text-muted">重新评估</span>
+                                            {% endif %}
+                                        </small>
+                                        {% elif log.trigger_type == 'delete_domain' %}
+                                        <small class="text-danger">
+                                            <i class="bi bi-folder-x"></i>
+                                            {% if log.operation_details %}
+                                            删除领域: {{ log.operation_details.domain_name }}
+                                            {% if log.operation_details.delete_papers %}
+                                            <br>包含 {{ log.papers_affected }} 篇论文
+                                            {% else %}
+                                            <br>保留 {{ log.papers_affected }} 篇论文
+                                            {% endif %}
+                                            {% else %}
+                                            删除领域
+                                            {% endif %}
                                         </small>
                                         {% else %}
                                         <strong class="text-primary">{{ log.total_new }}</strong> 篇新增
