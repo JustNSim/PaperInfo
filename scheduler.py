@@ -14,6 +14,7 @@ from config import Config
 from models import db, Domain, Paper, UpdateLog
 from crawler import ArxivCrawler, DBLPCrawler, SemanticScholarCrawler
 from llm import LLMEvaluator, LLMEvaluatorError
+from models import get_beijing_time
 
 # 配置日志
 logging.basicConfig(
@@ -104,7 +105,7 @@ def _get_fetch_date_range():
         (from_date, to_date) 元组，可能包含 None
     """
     from_date = None
-    to_date = datetime.utcnow()
+    to_date = get_beijing_time()
 
     # 检查论文表是否为空
     paper_count = Paper.query.count()
@@ -154,7 +155,7 @@ def _get_fetch_date_range():
                 logger.info(f"增量更新：从 {from_date.strftime('%Y-%m-%d %H:%M')} 开始")
             elif last_log:
                 # 上次更新成功但0篇论文，检查是否是最近的情况
-                time_since_last = (datetime.utcnow() - last_log.trigger_time).total_seconds()
+                time_since_last = (get_beijing_time() - last_log.trigger_time).total_seconds()
                 if time_since_last < 3600:  # 1小时内
                     # 上次更新刚刚发生且0篇，说明可能当天没有新论文
                     # 使用默认范围获取历史数据

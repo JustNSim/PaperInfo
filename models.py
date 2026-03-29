@@ -2,9 +2,15 @@
 PaperInfo 数据库模型
 """
 from flask_sqlalchemy import SQLAlchemy
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 
 db = SQLAlchemy()
+
+
+def get_beijing_time():
+    """获取当前北京时间 (UTC+8)"""
+    beijing_tz = timezone(timedelta(hours=8))
+    return datetime.now(beijing_tz).replace(tzinfo=None)
 
 
 class Domain(db.Model):
@@ -18,8 +24,8 @@ class Domain(db.Model):
     ccf_venues = db.Column(db.JSON, default=list)
     enabled = db.Column(db.Boolean, default=True, index=True)
     llm_prompt = db.Column(db.Text, nullable=True)  # 领域专用的LLM评估prompt
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=get_beijing_time)
+    updated_at = db.Column(db.DateTime, default=get_beijing_time, onupdate=get_beijing_time)
 
     # 关联论文
     papers = db.relationship('Paper', backref='domain', lazy='dynamic', cascade='all, delete-orphan')
@@ -48,7 +54,7 @@ class UpdateLog(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     trigger_type = db.Column(db.String(20), nullable=False)  # 'scheduled', 'manual', 'rescore', 'delete_domain'
-    trigger_time = db.Column(db.DateTime, default=datetime.utcnow, index=True)
+    trigger_time = db.Column(db.DateTime, default=get_beijing_time, index=True)
 
     # 更新结果统计
     total_new = db.Column(db.Integer, default=0)  # 新增论文总数
@@ -107,7 +113,7 @@ class Paper(db.Model):
     url = db.Column(db.String(500))
     pdf_url = db.Column(db.String(500))
     published_date = db.Column(db.DateTime, index=True)
-    fetched_date = db.Column(db.DateTime, default=datetime.utcnow, index=True)
+    fetched_date = db.Column(db.DateTime, default=get_beijing_time, index=True)
     is_favorite = db.Column(db.Boolean, default=False, index=True)  # 是否收藏
     llm_score = db.Column(db.Integer, nullable=True)  # LLM 相关度评分 (0-100)
     llm_value_score = db.Column(db.Integer, nullable=True)  # LLM 价值评分 (0-100)
