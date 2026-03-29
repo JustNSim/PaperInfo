@@ -6,6 +6,7 @@ import os
 import json
 import queue
 import threading
+import logging
 from datetime import datetime
 from flask import Flask, render_template, request, jsonify, Response, stream_with_context
 from sqlalchemy.exc import IntegrityError
@@ -13,6 +14,9 @@ from sqlalchemy.exc import IntegrityError
 from config import Config, config
 from models import db, Domain, Paper, UpdateLog
 from scheduler import setup_scheduler, manual_trigger_fetch, get_next_run_time, _evaluate_single_paper
+
+# 创建应用日志
+logger = logging.getLogger(__name__)
 
 # 创建 Flask 应用
 def create_app(config_name='default'):
