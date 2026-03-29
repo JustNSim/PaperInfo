@@ -947,6 +947,9 @@ def register_routes(app):
             # 获取要删除的论文信息（用于记录日志）
             papers_to_delete = Paper.query.filter(Paper.id.in_(paper_ids)).all()
 
+            if not papers_to_delete:
+                return jsonify({'success': False, 'message': '未找到要删除的论文'}), 400
+
             # 按来源和领域统计
             source_stats = {}
             domain_stats = {}
@@ -956,10 +959,12 @@ def register_routes(app):
                 domain_id = paper.domain_id
                 domain_stats[domain_id] = domain_stats.get(domain_id, 0) + 1
 
-            # 执行删除
-            count = Paper.query.filter(Paper.id.in_(paper_ids)).delete(
-                synchronize_session=False
-            )
+            # 逐个删除论文（更安全，确保会话同步）
+            count = 0
+            for paper in papers_to_delete:
+                db.session.delete(paper)
+                count += 1
+
             db.session.commit()
 
             # 记录删除操作到更新日志
