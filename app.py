@@ -491,12 +491,14 @@ def register_routes(app):
                                 'old_relevance': old_relevance,
                                 'old_value': old_value,
                                 'new_relevance': result.get('llm_score'),
-                                'new_value': result.get('llm_value_score')
+                                'new_value': result.get('llm_value_score'),
+                                'filtered': False
                             })
 
                             result_queue.put({
                                 'index': index,
                                 'success': True,
+                                'filtered': False,
                                 'paper_id': paper.id,
                                 'title': paper.title[:50],
                                 'relevance': result.get('llm_score'),
@@ -508,15 +510,13 @@ def register_routes(app):
                             result_queue.put({
                                 'index': index,
                                 'success': False,
+                                'filtered': False,
                                 'paper_id': paper.id,
                                 'title': paper.title[:50],
                                 'error': result.get('error')
                             })
                         else:
-                            # 被过滤的论文
-                            filtered_count += 1
-
-                            # 记录被过滤论文的分数
+                            # 被过滤的论文 - 不更新数据库，但记录到队列
                             score_changes.append({
                                 'paper_id': paper.id,
                                 'title': paper.title,
@@ -534,12 +534,15 @@ def register_routes(app):
                                 'paper_id': paper.id,
                                 'title': paper.title[:50],
                                 'relevance': result.get('llm_score'),
-                                'value': result.get('llm_value_score')
+                                'value': result.get('llm_value_score'),
+                                'old_relevance': old_relevance,
+                                'old_value': old_value
                             })
                     except Exception as e:
                         result_queue.put({
                             'index': index,
                             'success': False,
+                            'filtered': False,
                             'paper_id': paper.id,
                             'title': paper.title[:50],
                             'error': str(e)
