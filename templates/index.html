@@ -179,7 +179,7 @@
         <!-- 论文卡片列表 -->
         <div id="paperList">
             {% for paper in papers %}
-            <div class="card mb-3 paper-card" data-id="{{ paper.id }}" data-favorite="{{ paper.is_favorite }}">
+            <div class="card mb-4 paper-card" data-id="{{ paper.id }}" data-favorite="{{ paper.is_favorite }}">
                 <div class="card-body">
                     <!-- 顶部：复选框 + 收藏状态 -->
                     <div class="d-flex justify-content-between align-items-start mb-2">
@@ -204,28 +204,34 @@
                     </h5>
 
                     <!-- 元信息 -->
-                    <div class="mb-2">
-                        {% if paper.domain %}
-                        <span class="badge bg-dark" title="所属领域">
-                            <i class="bi bi-folder"></i> {{ paper.domain.name }}
-                        </span>
-                        {% endif %}
-                        <span class="badge bg-primary">{{ paper.source }}</span>
-                        {% if paper.venue %}
-                        <span class="badge bg-secondary">{{ paper.venue }}</span>
-                        {% endif %}
-                        {% if paper.year %}
-                        <span class="badge bg-info text-dark">{{ paper.year }}</span>
-                        {% endif %}
-                        {% if paper.llm_score is not none %}
-                        <span class="badge bg-success" title="LLM相关度评分">
-                            <i class="bi bi-bullseye"></i> 相关度 {{ paper.llm_score }}/100
-                        </span>
-                        {% endif %}
-                        {% if paper.llm_value_score is not none %}
-                        <span class="badge bg-info text-dark" title="LLM价值评分">
-                            <i class="bi bi-gem"></i> 价值 {{ paper.llm_value_score }}/100
-                        </span>
+                    <div class="mb-3">
+                        <div class="d-flex flex-wrap align-items-center gap-1 mb-2">
+                            {% if paper.domain %}
+                            <span class="badge bg-dark" title="所属领域">
+                                <i class="bi bi-folder"></i> {{ paper.domain.name }}
+                            </span>
+                            {% endif %}
+                            <span class="badge bg-primary">{{ paper.source }}</span>
+                            {% if paper.venue %}
+                            <span class="badge bg-secondary">{{ paper.venue }}</span>
+                            {% endif %}
+                            {% if paper.year %}
+                            <span class="badge bg-info">{{ paper.year }}</span>
+                            {% endif %}
+                        </div>
+                        {% if paper.llm_score is not none or paper.llm_value_score is not none %}
+                        <div class="d-flex flex-wrap gap-2">
+                            {% if paper.llm_score is not none %}
+                            <span class="badge bg-success" title="LLM相关度评分">
+                                <i class="bi bi-bullseye"></i> 相关度 {{ paper.llm_score }}
+                            </span>
+                            {% endif %}
+                            {% if paper.llm_value_score is not none %}
+                            <span class="badge bg-info" title="LLM价值评分">
+                                <i class="bi bi-gem"></i> 价值 {{ paper.llm_value_score }}
+                            </span>
+                            {% endif %}
+                        </div>
                         {% endif %}
                     </div>
 
