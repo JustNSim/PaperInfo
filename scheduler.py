@@ -708,6 +708,76 @@ def manual_trigger_fetch(domain_id: int = None) -> dict:
     return result
 
 
+def check_and_catch_up():
+    """
+    检查是否需要补执行错过的定时任务
+
+    逻辑：
+    1. 获取最后一次成功的定时更新记录
+    2. 计算今天应该执行的时间
+    3. 如果当前时间已过今天的执行时间，且最后一次更新早于今天，则补执行
+    """
+    from flask import current_app
+
+    try:
+        now = get_beijing_time()
+        today_scheduled = now.replace(
+            hour=Config.SCHEDULE_HOUR,
+            minute=Config.SCHEDULE_MINUTE,
+            second=0,
+            microsecond=0
+        )
+
+        # 如果当前时间还没到今天的执行时间，不需要补执行
+        if now < today_scheduled:
+            logger.info(f"当前时间未到今日执行时间 ({Config.SCHEDULE_HOUR:02d}:{Config.SCHEDULE_MINUTE:02d})，跳过补执行检查")
+            return False
+
+        # 获取最后一次成功的定时更新记录
+        last_scheduled_update = UpdateLog.query.filter_by(
+            trigger_type='scheduled',
+            status='success'
+        ).order_by(UpdateLog.trigger_time.desc()).first()
+
+        should_catch_up = False
+        reason = ""
+
+        if last_scheduled_update is None:
+            # 从未执行过定时任务
+            should_catch_up = True
+            reason = "从未执行过定时更新"
+        else:
+            last_time = last_scheduled_update.trigger_time
+            # 检查最后一次更新是否早于今天的执行时间
+            if last_time < today_scheduled:
+                should_catch_up = True
+                reason = f"最后一次更新 ({last_time.strftime('%Y-%m-%d %H:%M')}) 早于今日执行时间"
+
+        if should_catch_up:
+            logger.info(f"检测到需要补执行: {reason}")
+            logger.info("开始执行补更新...")
+
+            # 在应用上下文中执行
+            with current_app.app_context():
+                try:
+                    result = trigger_fetch_papers()
+                    if result.get('success'):
+                        logger.info("补执行成功")
+                    else:
+                        logger.warning(f"补执行失败: {result.get('message')}")
+                except Exception as e:
+                    logger.error(f"补执行出错: {e}")
+
+            return True
+        else:
+            logger.info("无需补执行，定时任务已是最新")
+            return False
+
+    except Exception as e:
+        logger.error(f"检查补执行时出错: {e}")
+        return False
+
+
 def setup_scheduler(app=None):
     """
     设置并启动调度器
@@ -760,6 +830,17 @@ def setup_scheduler(app=None):
     # 启动调度器
     scheduler.start()
     logger.info(f"调度器已启动，每天 {Config.SCHEDULE_HOUR:02d}:{Config.SCHEDULE_MINUTE:02d} 执行抓取")
+
+    # 检查并补执行错过的任务（延迟3秒执行，避免与应用初始化冲突）
+    if app is not None and getattr(Config, 'CATCH_UP_ENABLED', True):
+        scheduler.add_job(
+            check_and_catch_up,
+            trigger='date',
+            run_date=datetime.now() + timedelta(seconds=3),
+            id='catch_up_check',
+            name='检查补执行'
+        )
+        logger.info("已安排补执行检查任务")
 
     return scheduler
 

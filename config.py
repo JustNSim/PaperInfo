@@ -22,6 +22,7 @@ class Config:
     # 定时任务配置
     SCHEDULE_HOUR = 2       # 每天更新时间：小时 (24小时制)
     SCHEDULE_MINUTE = 0     # 每天更新时间：分钟
+    CATCH_UP_ENABLED = True  # 是否启用补执行机制（启动时检查并执行错过的定时任务）
 
     # 爬虫配置
     ARXIV_DELAY = 4                 # arXiv API 请求间隔（秒）
@@ -122,7 +123,7 @@ class Config:
     DBLP_API_URL = 'https://dblp.org/search/publ/api'
 
     # 分页配置
-    PAPERS_PER_PAGE = 20
+    PAPERS_PER_PAGE = 10
 
     # 预置领域配置
     DEFAULT_DOMAINS = [
