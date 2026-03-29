@@ -37,7 +37,14 @@ class Config:
 
     # LLM 评估器配置
     LLM_FILTER_ENABLED = os.environ.get('LLM_FILTER_ENABLED', 'true').lower() == 'true'
-    LLM_FILTER_THRESHOLD = int(os.environ.get('LLM_FILTER_THRESHOLD', '75'))
+
+    # 分数阈值（相关性分和相关度分需要分别达到阈值才会保存）
+    LLM_RELEVANCE_THRESHOLD = int(os.environ.get('LLM_RELEVANCE_THRESHOLD', '30'))  # 相关性阈值
+    LLM_VALUE_THRESHOLD = int(os.environ.get('LLM_VALUE_THRESHOLD', '30'))  # 价值阈值
+
+    # 兼容旧配置（如果只有单一阈值，则两个阈值都使用该值）
+    LLM_FILTER_THRESHOLD = int(os.environ.get('LLM_FILTER_THRESHOLD', '30'))
+
     LLM_PROVIDER = os.environ.get('LLM_PROVIDER', 'openai')  # LLM 提供商: 'openai', 'anthropic', 'zhipu', 'custom'
     LLM_MODEL = os.environ.get('LLM_MODEL')  # LLM 模型名称 (None 使用默认模型)
     LLM_DELAY = float(os.environ.get('LLM_DELAY', '1.0'))  # LLM API 请求间隔（秒）

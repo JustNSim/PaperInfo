@@ -564,7 +564,9 @@ def register_routes(app):
 
                             if result.get('filtered'):
                                 filtered_count += 1
-                                logger.debug(f"论文被过滤: {result.get('title')} (相关度: {result.get('relevance')}, 阈值: {Config.LLM_FILTER_THRESHOLD})")
+                                relevance_threshold = getattr(Config, 'LLM_RELEVANCE_THRESHOLD', Config.LLM_FILTER_THRESHOLD)
+                                value_threshold = getattr(Config, 'LLM_VALUE_THRESHOLD', Config.LLM_FILTER_THRESHOLD)
+                                logger.debug(f"论文被过滤: {result.get('title')} (相关度: {result.get('relevance')} < {relevance_threshold} 或 价值: {result.get('value')} < {value_threshold})")
                                 data = f"data: {json.dumps({
                                     'type': 'progress',
                                     'current': total_completed,
@@ -611,7 +613,15 @@ def register_routes(app):
                 # 记录重新评分操作到更新日志
                 try:
                     from scheduler import _create_update_log
-                    logger.info(f"重新评分完成: 总计={total}, 成功={success_count}, 失败={failed_count}, 被过滤={filtered_count}")
+
+                    # 计算分数发生变化的论文数量
+                    score_changed_count = sum(1 for c in score_changes if
+                        (c.get('old_relevance') != c.get('new_relevance')) or
+                        (c.get('old_value') != c.get('new_value'))
+                    )
+
+                    logger.info(f"重新评分完成: 总计={total}, 成功={success_count}, 失败={failed_count}, 被过滤={filtered_count}, 分数变化={score_changed_count}")
+
                     _create_update_log(
                         trigger_type='rescore',
                         domain_ids=[domain_id],
@@ -621,7 +631,8 @@ def register_routes(app):
                             'total': total,
                             'success_count': success_count,
                             'failed_count': failed_count,
-                            'filtered_count': filtered_count
+                            'filtered_count': filtered_count,
+                            'score_changed_count': score_changed_count
                         },
                         papers_affected=success_count
                     )

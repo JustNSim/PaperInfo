@@ -332,7 +332,13 @@ def _evaluate_single_paper(paper_data: dict, evaluator, domain_id: int) -> dict:
                 'error': eval_result.error
             }
 
-        filtered = eval_result.relevance_score < Config.LLM_FILTER_THRESHOLD
+        # 使用双重阈值过滤：相关性和价值都需要达到阈值
+        relevance_threshold = getattr(Config, 'LLM_RELEVANCE_THRESHOLD', Config.LLM_FILTER_THRESHOLD)
+        value_threshold = getattr(Config, 'LLM_VALUE_THRESHOLD', Config.LLM_FILTER_THRESHOLD)
+
+        filtered = (eval_result.relevance_score < relevance_threshold or
+                   eval_result.value_score < value_threshold)
+
         return {
             'paper_data': paper_data,
             'success': True,
