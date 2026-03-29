@@ -104,10 +104,10 @@
                                             {% if log.operation_details %}
                                             <span class="text-primary">
                                                 <i class="bi bi-arrow-repeat"></i>
-                                                重评: {{ log.operation_details.total|0 }} 篇
+                                                重评: {{ log.operation_details.total|default(0) }} 篇
                                             </span><br>
                                             <span class="text-success">
-                                                保存: {{ log.operation_details.success_count|0 }}
+                                                保存: {{ log.operation_details.success_count|default(0) }}
                                             </span>
                                             {% if log.operation_details.filtered_count %}
                                             <span class="text-warning">
@@ -126,19 +126,11 @@
                                         {% elif log.trigger_type == 'delete_domain' %}
                                         <small class="text-danger">
                                             <i class="bi bi-folder-x"></i>
-                                            {% if log.operation_details %}
-                                            删除领域: {{ log.operation_details.domain_name }}
-                                            {% if log.operation_details.delete_papers %}
-                                            <br>包含 {{ log.papers_affected }} 篇论文
-                                            {% else %}
-                                            <br>保留 {{ log.papers_affected }} 篇论文
-                                            {% endif %}
-                                            {% else %}
-                                            删除领域
+                                            删除了领域
+                                            {% if log.operation_details and log.operation_details.domain_name %}
+                                            : {{ log.operation_details.domain_name }}
                                             {% endif %}
                                         </small>
-                                        {% else %}
-                                        <strong class="text-primary">{{ log.total_new }}</strong> 篇新增
                                         {% endif %}
                                     </td>
                                     <td>

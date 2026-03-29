@@ -476,8 +476,8 @@ def register_routes(app):
                             'abstract': paper.abstract or ''
                         }, evaluator, domain.id)
 
-                        if result['success'] and not result.get('filtered'):
-                            # 立即更新评分到数据库
+                        if result['success']:
+                            # 始终更新评分到数据库（不管是否被过滤）
                             paper.llm_score = result.get('llm_score')
                             paper.llm_value_score = result.get('llm_value_score')
 
@@ -485,10 +485,11 @@ def register_routes(app):
                             db.session.commit()
 
                             # 通过队列返回分数变化（线程安全）
+                            # filtered 字段仍然保留用于统计显示
                             result_queue.put({
                                 'index': index,
                                 'success': True,
-                                'filtered': False,
+                                'filtered': result.get('filtered', False),
                                 'paper_id': paper.id,
                                 'title': paper.title,
                                 'title_short': paper.title[:50],
@@ -503,7 +504,7 @@ def register_routes(app):
                                     'old_value': old_value,
                                     'new_relevance': result.get('llm_score'),
                                     'new_value': result.get('llm_value_score'),
-                                    'filtered': False
+                                    'filtered': result.get('filtered', False)
                                 }
                             })
                         elif result.get('error'):
@@ -514,29 +515,6 @@ def register_routes(app):
                                 'paper_id': paper.id,
                                 'title_short': paper.title[:50],
                                 'error': result.get('error')
-                            })
-                        else:
-                            # 被过滤的论文 - 不更新数据库，但通过队列返回信息
-                            result_queue.put({
-                                'index': index,
-                                'success': True,
-                                'filtered': True,
-                                'paper_id': paper.id,
-                                'title': paper.title,
-                                'title_short': paper.title[:50],
-                                'relevance': result.get('llm_score'),
-                                'value': result.get('llm_value_score'),
-                                'old_relevance': old_relevance,
-                                'old_value': old_value,
-                                'score_change': {
-                                    'paper_id': paper.id,
-                                    'title': paper.title,
-                                    'old_relevance': old_relevance,
-                                    'old_value': old_value,
-                                    'new_relevance': result.get('llm_score'),
-                                    'new_value': result.get('llm_value_score'),
-                                    'filtered': True
-                                }
                             })
                     except Exception as e:
                         result_queue.put({
