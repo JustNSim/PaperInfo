@@ -484,27 +484,27 @@ def register_routes(app):
                             # 立即提交这一篇的更改
                             db.session.commit()
 
-                            # 记录分数变化
-                            score_changes.append({
-                                'paper_id': paper.id,
-                                'title': paper.title,
-                                'old_relevance': old_relevance,
-                                'old_value': old_value,
-                                'new_relevance': result.get('llm_score'),
-                                'new_value': result.get('llm_value_score'),
-                                'filtered': False
-                            })
-
+                            # 通过队列返回分数变化（线程安全）
                             result_queue.put({
                                 'index': index,
                                 'success': True,
                                 'filtered': False,
                                 'paper_id': paper.id,
-                                'title': paper.title[:50],
+                                'title': paper.title,
+                                'title_short': paper.title[:50],
                                 'relevance': result.get('llm_score'),
                                 'value': result.get('llm_value_score'),
                                 'old_relevance': old_relevance,
-                                'old_value': old_value
+                                'old_value': old_value,
+                                'score_change': {
+                                    'paper_id': paper.id,
+                                    'title': paper.title,
+                                    'old_relevance': old_relevance,
+                                    'old_value': old_value,
+                                    'new_relevance': result.get('llm_score'),
+                                    'new_value': result.get('llm_value_score'),
+                                    'filtered': False
+                                }
                             })
                         elif result.get('error'):
                             result_queue.put({
@@ -512,31 +512,31 @@ def register_routes(app):
                                 'success': False,
                                 'filtered': False,
                                 'paper_id': paper.id,
-                                'title': paper.title[:50],
+                                'title_short': paper.title[:50],
                                 'error': result.get('error')
                             })
                         else:
-                            # 被过滤的论文 - 不更新数据库，但记录到队列
-                            score_changes.append({
-                                'paper_id': paper.id,
-                                'title': paper.title,
-                                'old_relevance': old_relevance,
-                                'old_value': old_value,
-                                'new_relevance': result.get('llm_score'),
-                                'new_value': result.get('llm_value_score'),
-                                'filtered': True
-                            })
-
+                            # 被过滤的论文 - 不更新数据库，但通过队列返回信息
                             result_queue.put({
                                 'index': index,
                                 'success': True,
                                 'filtered': True,
                                 'paper_id': paper.id,
-                                'title': paper.title[:50],
+                                'title': paper.title,
+                                'title_short': paper.title[:50],
                                 'relevance': result.get('llm_score'),
                                 'value': result.get('llm_value_score'),
                                 'old_relevance': old_relevance,
-                                'old_value': old_value
+                                'old_value': old_value,
+                                'score_change': {
+                                    'paper_id': paper.id,
+                                    'title': paper.title,
+                                    'old_relevance': old_relevance,
+                                    'old_value': old_value,
+                                    'new_relevance': result.get('llm_score'),
+                                    'new_value': result.get('llm_value_score'),
+                                    'filtered': True
+                                }
                             })
                     except Exception as e:
                         result_queue.put({
@@ -544,7 +544,7 @@ def register_routes(app):
                             'success': False,
                             'filtered': False,
                             'paper_id': paper.id,
-                            'title': paper.title[:50],
+                            'title_short': paper.title[:50],
                             'error': str(e)
                         })
 
@@ -569,18 +569,22 @@ def register_routes(app):
                             completed_indices.add(result['index'])
                             total_completed += 1
 
+                            # 从队列结果中提取分数变化（线程安全）
+                            if result.get('score_change'):
+                                score_changes.append(result['score_change'])
+
                             if result.get('filtered'):
                                 filtered_count += 1
                                 relevance_threshold = getattr(Config, 'LLM_RELEVANCE_THRESHOLD', Config.LLM_FILTER_THRESHOLD)
                                 value_threshold = getattr(Config, 'LLM_VALUE_THRESHOLD', Config.LLM_FILTER_THRESHOLD)
-                                logger.debug(f"论文被过滤: {result.get('title')} (相关度: {result.get('relevance')} < {relevance_threshold} 或 价值: {result.get('value')} < {value_threshold})")
+                                logger.debug(f"论文被过滤: {result.get('title_short')} (相关度: {result.get('relevance')} < {relevance_threshold} 或 价值: {result.get('value')} < {value_threshold})")
                                 data = f"data: {json.dumps({
                                     'type': 'progress',
                                     'current': total_completed,
                                     'total': total,
                                     'percent': int(total_completed / total * 100),
                                     'paper_id': result.get('paper_id'),
-                                    'title': result.get('title'),
+                                    'title': result.get('title_short'),
                                     'filtered': True,
                                     'relevance': result.get('relevance'),
                                     'value': result.get('value')
@@ -593,7 +597,7 @@ def register_routes(app):
                                     'total': total,
                                     'percent': int(total_completed / total * 100),
                                     'paper_id': result.get('paper_id'),
-                                    'title': result.get('title'),
+                                    'title': result.get('title_short'),
                                     'error': result.get('error')
                                 })}\n\n"
                             else:
@@ -604,7 +608,7 @@ def register_routes(app):
                                     'total': total,
                                     'percent': int(total_completed / total * 100),
                                     'paper_id': result.get('paper_id'),
-                                    'title': result.get('title'),
+                                    'title': result.get('title_short'),
                                     'relevance': result.get('relevance'),
                                     'value': result.get('value'),
                                     'old_relevance': result.get('old_relevance'),
