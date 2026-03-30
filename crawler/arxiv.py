@@ -3,10 +3,9 @@ arXiv API 爬虫
 """
 import time
 import logging
-import requests
 import feedparser
 from typing import List, Dict, Any, Optional
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from .base import BaseCrawler
 
@@ -23,8 +22,10 @@ class ArxivCrawler(BaseCrawler):
     MAX_RESULTS_PER_BATCH = 100
     # 最低相关性分数（0-100）
     MIN_RELEVANCE_SCORE = 15  # 必须包含核心关键词或多个关键词
+    # arXiv 建议的请求间隔（秒）
+    DEFAULT_DELAY = 4.0
 
-    def __init__(self, delay: float = 3.0, timeout: int = 30, max_results: int = 100):
+    def __init__(self, delay: float = DEFAULT_DELAY, timeout: int = 30, max_results: int = 100):
         super().__init__(delay=delay, timeout=timeout)
         self.max_results = max_results
 
@@ -76,6 +77,12 @@ class ArxivCrawler(BaseCrawler):
             all_papers.extend(batch_papers)
             logger.info(f"第 {i} 批获取 {len(batch_papers)} 篇论文，累计 {len(all_papers)} 篇")
 
+            # 批次之间额外等待，避免触发频率限制
+            if i < total_batches:
+                extra_wait = 2.0
+                logger.debug(f"批次间额外等待 {extra_wait} 秒")
+                time.sleep(extra_wait)
+
         # 去重（按 source_id）
         unique_papers = self._deduplicate_papers(all_papers)
         logger.info(f"去重后共 {len(unique_papers)} 篇论文")
@@ -123,24 +130,25 @@ class ArxivCrawler(BaseCrawler):
 
         logger.debug(f"arXiv 批次查询: {query}")
 
-        self._wait_for_rate_limit()
+        params = {
+            'search_query': query,
+            'start': 0,
+            'max_results': max_results,
+            'sortBy': 'submittedDate',
+            'sortOrder': 'descending'
+        }
+
+        response = self._make_request(self.ARXIV_API_URL, params=params)
+
+        if response is None:
+            logger.error("arXiv API 请求失败，所有重试均失败")
+            return []
+
+        if response.status_code != 200:
+            logger.error(f"arXiv API 返回错误状态码: {response.status_code}")
+            return []
 
         try:
-            params = {
-                'search_query': query,
-                'start': 0,
-                'max_results': max_results,
-                'sortBy': 'submittedDate',
-                'sortOrder': 'descending'
-            }
-
-            response = requests.get(
-                self.ARXIV_API_URL,
-                params=params,
-                timeout=self.timeout
-            )
-            response.raise_for_status()
-
             # 解析 Atom feed
             feed = feedparser.parse(response.content)
             papers = []
@@ -161,8 +169,8 @@ class ArxivCrawler(BaseCrawler):
             logger.info(f"批次获取 {len(papers)} 篇相关性达标的论文")
             return papers
 
-        except requests.RequestException as e:
-            logger.error(f"arXiv API 请求失败: {e}")
+        except Exception as e:
+            logger.error(f"解析 arXiv 响应失败: {e}")
             return []
 
     def _within_date_range(self, paper: Dict[str, Any],
@@ -276,54 +284,6 @@ class ArxivCrawler(BaseCrawler):
             except ValueError:
                 return 0
         return 1  # 默认版本 1
-
-    def _parse_entry(self, entry) -> Dict[str, Any]:
-
-        # 构建查询字符串
-        keyword_query = ' OR '.join([f'all:"{kw}"' for kw in effective_keywords])
-
-        if categories:
-            # 使用 AND 逻辑：论文必须包含关键词 AND 属于指定分类
-            cat_query = ' OR '.join([f'cat:{cat}' for cat in categories])
-            query = f'({keyword_query}) AND ({cat_query})'
-        else:
-            query = keyword_query
-
-        logger.info(f"arXiv 搜索查询: {query}")
-
-        self._wait_for_rate_limit()
-
-        try:
-            params = {
-                'search_query': query,
-                'start': 0,
-                'max_results': max_results,
-                'sortBy': 'submittedDate',
-                'sortOrder': 'descending'
-            }
-
-            response = requests.get(
-                self.ARXIV_API_URL,
-                params=params,
-                timeout=self.timeout
-            )
-            response.raise_for_status()
-
-            # 解析 Atom feed
-            feed = feedparser.parse(response.content)
-            papers = []
-
-            for entry in feed.entries:
-                paper = self._parse_entry(entry)
-                if paper:
-                    papers.append(paper)
-
-            logger.info(f"从 arXiv 获取到 {len(papers)} 篇论文")
-            return papers
-
-        except requests.RequestException as e:
-            logger.error(f"arXiv API 请求失败: {e}")
-            return []
 
     def _parse_entry(self, entry) -> Dict[str, Any]:
         """解析单个论文条目"""

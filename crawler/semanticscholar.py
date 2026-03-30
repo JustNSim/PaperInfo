@@ -3,7 +3,7 @@ Semantic Scholar API 爬虫
 使用 Semantic Scholar Graph API 获取论文信息
 """
 import logging
-import requests
+import time
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 
@@ -52,7 +52,7 @@ class SemanticScholarCrawler(BaseCrawler):
         all_papers = []
 
         # 构建查询字符串：使用 OR 逻辑组合关键词
-        query = ' OR '.join(keywords)
+        query = ' OR '.join(keywords[:20])  # 限制关键词数量
 
         # 添加 venue 过滤
         if venues:
@@ -74,19 +74,11 @@ class SemanticScholarCrawler(BaseCrawler):
 
         logger.info(f"Semantic Scholar 查询: {query[:100]}...")
 
-        self._wait_for_rate_limit()
+        papers = self._search_papers(query, self.max_results, core_keywords)
+        all_papers.extend(papers)
 
-        try:
-            # 发送搜索请求
-            papers = self._search_papers(query, self.max_results, core_keywords)
-            all_papers.extend(papers)
-
-            logger.info(f"从 Semantic Scholar 获取到 {len(all_papers)} 篇论文")
-            return all_papers
-
-        except requests.RequestException as e:
-            logger.error(f"Semantic Scholar API 请求失败: {e}")
-            return []
+        logger.info(f"从 Semantic Scholar 获取到 {len(all_papers)} 篇论文")
+        return all_papers
 
     def _search_papers(self, query: str, limit: int, core_keywords: List[str] = None) -> List[Dict[str, Any]]:
         """执行搜索请求
@@ -102,29 +94,40 @@ class SemanticScholarCrawler(BaseCrawler):
             'fields': 'paperId,title,abstract,authors,venue,year,url,publicationDate,publicationTypes'
         }
 
-        response = requests.get(
+        response = self._make_request(
             f'{self.S2_API_URL}/paper/search',
             params=params,
-            timeout=self.timeout,
             headers={'Accept': 'application/json'}
         )
-        response.raise_for_status()
 
-        data = response.json()
-        papers = []
+        if response is None:
+            logger.error("Semantic Scholar API 请求失败，所有重试均失败")
+            return []
 
-        if 'data' not in data:
+        if response.status_code != 200:
+            logger.error(f"Semantic Scholar API 返回错误状态码: {response.status_code}")
+            return []
+
+        try:
+            data = response.json()
+            papers = []
+
+            if 'data' not in data:
+                return papers
+
+            for item in data['data']:
+                paper = self._parse_paper(item)
+                if paper:
+                    # 计算相关性分数并过滤
+                    score = self._calculate_relevance_score(paper, core_keywords)
+                    if score >= self.MIN_RELEVANCE_SCORE:
+                        papers.append(paper)
+
             return papers
 
-        for item in data['data']:
-            paper = self._parse_paper(item)
-            if paper:
-                # 计算相关性分数并过滤
-                score = self._calculate_relevance_score(paper, core_keywords)
-                if score >= self.MIN_RELEVANCE_SCORE:
-                    papers.append(paper)
-
-        return papers
+        except Exception as e:
+            logger.error(f"解析 Semantic Scholar 响应失败: {e}")
+            return []
 
     def _parse_paper(self, item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """解析单篇论文"""

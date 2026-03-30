@@ -30,6 +30,9 @@ logger = logging.getLogger(__name__)
 # 全局调度器实例
 scheduler = None
 
+# 全局 Flask 应用实例（用于在调度器任务中获取应用上下文）
+flask_app = None
+
 # 全局 LLM 评估器实例
 llm_evaluator = None
 
@@ -264,6 +267,7 @@ def fetch_papers_for_domain(domain: Domain) -> dict:
         # 3. 从 Semantic Scholar 抓取
         logger.info(f"从 Semantic Scholar 抓取 {domain.name} 论文...")
         s2_crawler = SemanticScholarCrawler(
+            delay=Config.S2_DELAY,
             timeout=Config.REQUEST_TIMEOUT,
             max_results=100
         )
@@ -717,64 +721,101 @@ def check_and_catch_up():
     2. 计算今天应该执行的时间
     3. 如果当前时间已过今天的执行时间，且最后一次更新早于今天，则补执行
     """
-    from flask import current_app
+    global flask_app
+
+    if flask_app is None:
+        logger.error("Flask 应用实例未初始化，无法执行补检查")
+        return False
 
     try:
-        now = get_beijing_time()
-        today_scheduled = now.replace(
-            hour=Config.SCHEDULE_HOUR,
-            minute=Config.SCHEDULE_MINUTE,
-            second=0,
-            microsecond=0
-        )
+        with flask_app.app_context():
+            now = get_beijing_time()
+            today_scheduled = now.replace(
+                hour=Config.SCHEDULE_HOUR,
+                minute=Config.SCHEDULE_MINUTE,
+                second=0,
+                microsecond=0
+            )
 
-        # 如果当前时间还没到今天的执行时间，不需要补执行
-        if now < today_scheduled:
-            logger.info(f"当前时间未到今日执行时间 ({Config.SCHEDULE_HOUR:02d}:{Config.SCHEDULE_MINUTE:02d})，跳过补执行检查")
-            return False
+            # 如果当前时间还没到今天的执行时间，不需要补执行
+            if now < today_scheduled:
+                logger.debug(f"当前时间未到今日执行时间 ({Config.SCHEDULE_HOUR:02d}:{Config.SCHEDULE_MINUTE:02d})，跳过补执行检查")
+                return False
 
-        # 获取最后一次成功的定时更新记录
-        last_scheduled_update = UpdateLog.query.filter_by(
-            trigger_type='scheduled',
-            status='success'
-        ).order_by(UpdateLog.trigger_time.desc()).first()
+            # 获取最后一次成功的定时更新记录
+            last_scheduled_update = UpdateLog.query.filter_by(
+                trigger_type='scheduled',
+                status='success'
+            ).order_by(UpdateLog.trigger_time.desc()).first()
 
-        should_catch_up = False
-        reason = ""
+            should_catch_up = False
+            reason = ""
 
-        if last_scheduled_update is None:
-            # 从未执行过定时任务
-            should_catch_up = True
-            reason = "从未执行过定时更新"
-        else:
-            last_time = last_scheduled_update.trigger_time
-            # 检查最后一次更新是否早于今天的执行时间
-            if last_time < today_scheduled:
+            if last_scheduled_update is None:
+                # 从未执行过定时任务
                 should_catch_up = True
-                reason = f"最后一次更新 ({last_time.strftime('%Y-%m-%d %H:%M')}) 早于今日执行时间"
+                reason = "从未执行过定时更新"
+            else:
+                last_time = last_scheduled_update.trigger_time
+                # 检查最后一次更新是否早于今天的执行时间
+                if last_time < today_scheduled:
+                    should_catch_up = True
+                    reason = f"最后一次更新 ({last_time.strftime('%Y-%m-%d %H:%M')}) 早于今日执行时间"
 
-        if should_catch_up:
-            logger.info(f"检测到需要补执行: {reason}")
-            logger.info("开始执行补更新...")
+            if should_catch_up:
+                logger.info(f"检测到需要补执行: {reason}")
+                logger.info("开始执行补更新...")
 
-            # 在应用上下文中执行
-            with current_app.app_context():
                 try:
-                    result = trigger_fetch_papers()
+                    result = manual_trigger_fetch()
                     if result.get('success'):
-                        logger.info("补执行成功")
+                        logger.info(f"补执行成功: {result.get('message')}")
                     else:
                         logger.warning(f"补执行失败: {result.get('message')}")
                 except Exception as e:
                     logger.error(f"补执行出错: {e}")
 
-            return True
-        else:
-            logger.info("无需补执行，定时任务已是最新")
+                return True
+
+            logger.debug("无需补执行，定时任务已是最新")
             return False
 
     except Exception as e:
         logger.error(f"检查补执行时出错: {e}")
+        return False
+
+
+# 记录上次检查日期，避免同一天重复补执行
+_last_catch_up_date = None
+
+
+def periodic_catch_up_check():
+    """
+    定期检查是否需要补执行（每5分钟调用一次）
+
+    使用内存变量记录，避免同一天重复执行
+    """
+    global _last_catch_up_date
+
+    try:
+        now = get_beijing_time()
+        today = now.date()
+
+        # 如果今天已经执行过补更新，跳过
+        if _last_catch_up_date == today:
+            return False
+
+        # 检查是否需要补执行
+        result = check_and_catch_up()
+
+        # 如果执行了补更新，记录日期
+        if result:
+            _last_catch_up_date = today
+
+        return result
+
+    except Exception as e:
+        logger.error(f"定期补执行检查出错: {e}")
         return False
 
 
@@ -788,7 +829,11 @@ def setup_scheduler(app=None):
     Returns:
         调度器实例
     """
-    global scheduler
+    global scheduler, flask_app
+
+    # 保存 Flask 应用实例（用于在调度器任务中获取应用上下文）
+    if app is not None:
+        flask_app = app
 
     # 检查调度器是否已经存在并正在运行
     if scheduler is not None and scheduler.running:
@@ -831,16 +876,26 @@ def setup_scheduler(app=None):
     scheduler.start()
     logger.info(f"调度器已启动，每天 {Config.SCHEDULE_HOUR:02d}:{Config.SCHEDULE_MINUTE:02d} 执行抓取")
 
-    # 检查并补执行错过的任务（延迟3秒执行，避免与应用初始化冲突）
+    # 添加定期补执行检查任务（每5分钟检查一次）
     if app is not None and getattr(Config, 'CATCH_UP_ENABLED', True):
+        # 启动时立即检查一次
         scheduler.add_job(
             check_and_catch_up,
             trigger='date',
             run_date=datetime.now() + timedelta(seconds=3),
-            id='catch_up_check',
-            name='检查补执行'
+            id='initial_catch_up_check',
+            name='启动时补执行检查'
         )
-        logger.info("已安排补执行检查任务")
+
+        # 每5分钟检查一次是否需要补执行
+        scheduler.add_job(
+            periodic_catch_up_check,
+            trigger=CronTrigger(minute='*/5'),  # 每5分钟
+            id='periodic_catch_up_check',
+            name='定期补执行检查',
+            replace_existing=True
+        )
+        logger.info("已安排补执行检查任务（启动时 + 每5分钟）")
 
     return scheduler
 

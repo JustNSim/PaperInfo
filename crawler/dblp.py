@@ -2,7 +2,7 @@
 DBLP API 爬虫
 """
 import logging
-import requests
+import time
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 
@@ -17,8 +17,12 @@ class DBLPCrawler(BaseCrawler):
     DBLP_API_URL = 'https://dblp.org/search/publ/api'
     # 每个 venue 获取的最大结果数
     MAX_RESULTS_PER_VENUE = 50
+    # DBLP 请求间隔（秒）- DBLP 对频繁请求比较敏感
+    DEFAULT_DELAY = 3.0
+    # venue 之间的额外等待时间
+    VENUE_DELAY = 2.0
 
-    def __init__(self, delay: float = 3.0, timeout: int = 30, max_results: int = 100):
+    def __init__(self, delay: float = DEFAULT_DELAY, timeout: int = 30, max_results: int = 100):
         super().__init__(delay=delay, timeout=timeout)
         self.max_results = max_results
 
@@ -43,15 +47,22 @@ class DBLPCrawler(BaseCrawler):
         if venues:
             # 按 venue 分别查询（服务端过滤）
             logger.info(f"按 {len(venues)} 个 venue 分别查询 DBLP")
-            for venue in venues:
+
+            for i, venue in enumerate(venues, 1):
                 papers = self._search_by_venue(keywords, venue, from_year, to_year)
                 all_papers.extend(papers)
-                logger.info(f"Venue '{venue}' 获取 {len(papers)} 篇论文")
+                logger.info(f"Venue '{venue}' 获取 {len(papers)} 篇论文 ({i}/{len(venues)})")
 
                 # 检查是否达到总数限制
                 if len(all_papers) >= self.max_results:
                     all_papers = all_papers[:self.max_results]
+                    logger.info(f"已达到最大结果数限制 ({self.max_results})，停止查询")
                     break
+
+                # venue 之间额外等待，避免触发频率限制
+                if i < len(venues):
+                    logger.debug(f"Venue 间等待 {self.VENUE_DELAY} 秒")
+                    time.sleep(self.VENUE_DELAY)
         else:
             # 没有 venue 限制，使用通用查询
             all_papers = self._search_general(keywords, from_year, to_year)
@@ -66,8 +77,6 @@ class DBLPCrawler(BaseCrawler):
                          from_year: Optional[int] = None,
                          to_year: Optional[int] = None) -> List[Dict[str, Any]]:
         """按指定 venue 搜索"""
-        self._wait_for_rate_limit()
-
         try:
             # 构建查询：关键词 + venue 过滤
             # 限制关键词数量以避免查询过长
@@ -98,12 +107,15 @@ class DBLPCrawler(BaseCrawler):
 
             logger.debug(f"DBLP venue 查询: {query[:100]}...")
 
-            response = requests.get(
-                self.DBLP_API_URL,
-                params=params,
-                timeout=self.timeout
-            )
-            response.raise_for_status()
+            response = self._make_request(self.DBLP_API_URL, params=params)
+
+            if response is None:
+                logger.warning(f"DBLP venue '{venue}' 查询失败：所有重试均失败")
+                return []
+
+            if response.status_code != 200:
+                logger.warning(f"DBLP venue '{venue}' 返回错误状态码: {response.status_code}")
+                return []
 
             data = response.json()
             papers = []
@@ -134,7 +146,7 @@ class DBLPCrawler(BaseCrawler):
 
             return papers
 
-        except requests.RequestException as e:
+        except Exception as e:
             logger.error(f"DBLP venue '{venue}' 查询失败: {e}")
             return []
 
@@ -142,8 +154,6 @@ class DBLPCrawler(BaseCrawler):
                        from_year: Optional[int] = None,
                        to_year: Optional[int] = None) -> List[Dict[str, Any]]:
         """通用查询（不指定 venue）"""
-        self._wait_for_rate_limit()
-
         try:
             # 构建组合查询：关键词1 OR 关键词2 OR ...
             # 使用 DBLP 的 OR 语法
@@ -173,12 +183,15 @@ class DBLPCrawler(BaseCrawler):
 
             logger.info(f"DBLP 组合搜索查询: {query[:200]}...")  # 截断日志避免过长
 
-            response = requests.get(
-                self.DBLP_API_URL,
-                params=params,
-                timeout=self.timeout
-            )
-            response.raise_for_status()
+            response = self._make_request(self.DBLP_API_URL, params=params)
+
+            if response is None:
+                logger.error("DBLP API 请求失败：所有重试均失败")
+                return []
+
+            if response.status_code != 200:
+                logger.error(f"DBLP API 返回错误状态码: {response.status_code}")
+                return []
 
             data = response.json()
 
@@ -200,7 +213,7 @@ class DBLPCrawler(BaseCrawler):
             logger.info(f"从 DBLP 获取到 {len(all_papers)} 篇论文")
             return all_papers
 
-        except requests.RequestException as e:
+        except Exception as e:
             logger.error(f"DBLP API 请求失败: {e}")
             return []
 
