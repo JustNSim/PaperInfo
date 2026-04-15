@@ -3,6 +3,8 @@ PaperInfo 定时任务配置
 使用 APScheduler 实现定时抓取论文
 """
 import logging
+import os
+import sys
 from datetime import datetime, timedelta
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -38,6 +40,51 @@ llm_evaluator = None
 
 # LLM 过滤计数器 (每次更新操作重置)
 llm_filtered_count = 0
+
+# 进程级锁文件路径（防止多实例并发抓取）
+_LOCK_FILE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', '.fetch.lock')
+_LOCK_FD = None
+
+
+def _acquire_fetch_lock() -> bool:
+    """尝试获取抓取锁（文件锁），防止多进程并发抓取"""
+    global _LOCK_FD
+    try:
+        os.makedirs(os.path.dirname(_LOCK_FILE_PATH), exist_ok=True)
+        _LOCK_FD = open(_LOCK_FILE_PATH, 'w')
+        if sys.platform == 'win32':
+            import msvcrt
+            msvcrt.locking(_LOCK_FD.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(_LOCK_FD.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        logger.debug("成功获取抓取锁")
+        return True
+    except (IOError, OSError):
+        if _LOCK_FD:
+            _LOCK_FD.close()
+            _LOCK_FD = None
+        logger.warning("无法获取抓取锁，可能有另一个实例正在执行")
+        return False
+
+
+def _release_fetch_lock():
+    """释放抓取锁"""
+    global _LOCK_FD
+    try:
+        if _LOCK_FD:
+            if sys.platform == 'win32':
+                import msvcrt
+                _LOCK_FD.seek(0)
+                msvcrt.locking(_LOCK_FD.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(_LOCK_FD.fileno(), fcntl.LOCK_UN)
+            _LOCK_FD.close()
+            _LOCK_FD = None
+            logger.debug("已释放抓取锁")
+    except Exception as e:
+        logger.warning(f"释放抓取锁失败: {e}")
 
 
 def _get_llm_evaluator(domain=None):
@@ -510,7 +557,7 @@ def _save_papers(papers: list, domain: Domain) -> int:
 
 def _commit_batch(batch: list) -> int:
     """
-    提交一批论文到数据库
+    提交一批论文到数据库（逐条插入，避免 UNIQUE 冲突导致整批丢失）
 
     Args:
         batch: 论文对象列表
@@ -521,18 +568,23 @@ def _commit_batch(batch: list) -> int:
     if not batch:
         return 0
 
-    try:
-        for paper in batch:
+    committed = 0
+    for paper in batch:
+        try:
             db.session.add(paper)
+            db.session.commit()
+            committed += 1
+        except Exception as e:
+            db.session.rollback()
+            # UNIQUE 冲突是预期的（并发场景），不作为错误处理
+            if 'UNIQUE constraint' in str(e):
+                logger.debug(f"论文已存在，跳过: {paper.title[:50]}...")
+            else:
+                logger.warning(f"提交论文失败: {paper.title[:50]}... - {e}")
 
-        db.session.commit()
-        logger.info(f"成功提交批次: {len(batch)} 篇论文")
-        return len(batch)
-
-    except Exception as e:
-        db.session.rollback()
-        logger.error(f"批次提交失败 ({len(batch)} 篇论文丢失): {e}")
-        return 0
+    if committed > 0:
+        logger.info(f"成功提交批次: {committed}/{len(batch)} 篇论文")
+    return committed
 
 
 def _create_update_log(trigger_type: str, total_new: int = 0, source_stats: dict = None,
@@ -652,6 +704,17 @@ def manual_trigger_fetch(domain_id: int = None) -> dict:
     """
     logger.info(f"手动触发抓取，domain_id: {domain_id}")
 
+    # 获取进程锁，防止多实例并发
+    if not _acquire_fetch_lock():
+        return {
+            'success': False,
+            'new_papers': 0,
+            'domains_processed': 0,
+            'source_stats': {},
+            'llm_filtered': 0,
+            'message': '另一个更新任务正在执行中，请稍后重试'
+        }
+
     global llm_filtered_count
     llm_filtered_count = 0  # 重置 LLM 过滤计数器
 
@@ -708,6 +771,9 @@ def manual_trigger_fetch(domain_id: int = None) -> dict:
             _create_update_log('manual', 0, {'arxiv': 0, 'dblp': 0}, domain_ids, 'failed', str(e), llm_filtered=0)
         except:
             pass
+
+    finally:
+        _release_fetch_lock()
 
     return result
 

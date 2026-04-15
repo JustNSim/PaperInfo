@@ -17,12 +17,10 @@ class DBLPCrawler(BaseCrawler):
     DBLP_API_URL = 'https://dblp.org/search/publ/api'
     # 每个 venue 获取的最大结果数
     MAX_RESULTS_PER_VENUE = 50
-    # DBLP 请求间隔（秒）- DBLP 对频繁请求比较敏感
+    # DBLP 请求间隔（秒）
     DEFAULT_DELAY = 3.0
-    # 每批合并的 venue 数量（减少请求次数）
-    VENUE_BATCH_SIZE = 8
-    # 合并查询失败时回退到单 venue 查询的阈值
-    FALLBACK_THRESHOLD = 3
+    # 管道合并的 venue 每批最多数量
+    PIPE_BATCH_SIZE = 15
 
     def __init__(self, delay: float = DEFAULT_DELAY, timeout: int = 30, max_results: int = 100):
         super().__init__(delay=delay, timeout=timeout)
@@ -32,13 +30,18 @@ class DBLPCrawler(BaseCrawler):
                from_year: Optional[int] = None, to_year: Optional[int] = None,
                **kwargs) -> List[Dict[str, Any]]:
         """
-        搜索 DBLP 论文（合并 venue 查询，支持时间过滤）
+        搜索 DBLP 论文（优化 venue 查询策略，减少请求数）
+
+        策略：
+        - 单词 venue（如 ICSE, CCS）用管道符合并为一次查询: venue:ICSE|CCS|NDSS
+        - 含空格的 venue（如 "IEEE S&P"）单独查询
+        - 分别查询避免 DBLP API 语法限制
 
         Args:
             keywords: 搜索关键词列表
-            venues: 会议/期刊列表（如 'IEEE S&P', 'ACM CCS'）
-            from_year: 起始年份（只获取此年份及之后的论文）
-            to_year: 结束年份（只获取此年份及之前的论文）
+            venues: 会议/期刊列表
+            from_year: 起始年份
+            to_year: 结束年份
             **kwargs: 其他参数
 
         Returns:
@@ -47,48 +50,40 @@ class DBLPCrawler(BaseCrawler):
         all_papers = []
 
         if venues:
-            # 将 venues 分组，每组一次请求
-            venue_batches = self._batch_venues(venues)
-            total_batches = len(venue_batches)
-            logger.info(f"DBLP 合并查询: {len(venues)} 个 venue 分为 {total_batches} 批")
+            # 分离单词 venue 和含空格 venue
+            simple_venues = [v for v in venues if ' ' not in v]
+            complex_venues = [v for v in venues if ' ' in v]
 
-            for i, batch in enumerate(venue_batches, 1):
-                if len(batch) == 1:
-                    # 单个 venue 直接查
-                    papers = self._search_by_venue(keywords, batch[0], from_year, to_year)
-                    logger.info(f"Venue '{batch[0]}' 获取 {len(papers)} 篇论文 ({i}/{total_batches})")
-                else:
-                    # 合并多个 venue 查询
-                    papers = self._search_by_venue_batch(keywords, batch, from_year, to_year)
-                    logger.info(f"Venue 批次 {i}/{total_batches} ({len(batch)} 个 venue) 获取 {len(papers)} 篇论文")
+            logger.info(f"DBLP 查询: {len(venues)} 个 venue ({len(simple_venues)} 简单, {len(complex_venues)} 含空格)")
 
-                    # 如果合并查询返回 0 结果且连续失败，回退到逐个查询
-                    if papers == [] and i <= self.FALLBACK_THRESHOLD:
-                        logger.info(f"合并查询无结果，回退到逐个查询 venue 批次 {i}")
-                        fallback_papers = []
-                        for venue in batch:
-                            vp = self._search_by_venue(keywords, venue, from_year, to_year)
-                            fallback_papers.extend(vp)
-                            if len(all_papers) + len(fallback_papers) >= self.max_results:
-                                break
-                        all_papers.extend(fallback_papers)
+            # 1. 用管道符合并所有简单 venue（少量请求）
+            if simple_venues:
+                simple_batches = self._batch_venues(simple_venues, self.PIPE_BATCH_SIZE)
+                for i, batch in enumerate(simple_batches, 1):
+                    papers = self._search_by_venue_pipe(keywords, batch, from_year, to_year)
+                    all_papers.extend(papers)
+                    logger.info(f"简单 venue 批次 {i}/{len(simple_batches)} ({len(batch)} 个) 获取 {len(papers)} 篇论文")
 
-                        if len(all_papers) >= self.max_results:
-                            all_papers = all_papers[:self.max_results]
-                            logger.info(f"已达到最大结果数限制 ({self.max_results})，停止查询")
-                            break
-                        continue
+                    if len(all_papers) >= self.max_results:
+                        break
 
-                all_papers.extend(papers)
+            # 2. 含空格的 venue 逐个查询
+            if complex_venues and len(all_papers) < self.max_results:
+                logger.info(f"查询 {len(complex_venues)} 个含空格 venue（逐个查询）")
+                for i, venue in enumerate(complex_venues, 1):
+                    papers = self._search_by_venue(keywords, venue, from_year, to_year)
+                    all_papers.extend(papers)
+                    logger.debug(f"Venue '{venue}' 获取 {len(papers)} 篇 ({i}/{len(complex_venues)})")
 
-                # 检查是否达到总数限制
-                if len(all_papers) >= self.max_results:
-                    all_papers = all_papers[:self.max_results]
-                    logger.info(f"已达到最大结果数限制 ({self.max_results})，停止查询")
-                    break
+                    if len(all_papers) >= self.max_results:
+                        break
         else:
             # 没有 venue 限制，使用通用查询
             all_papers = self._search_general(keywords, from_year, to_year)
+
+        # 检查总数限制
+        if len(all_papers) > self.max_results:
+            all_papers = all_papers[:self.max_results]
 
         # 去重
         unique_papers = self._deduplicate_papers(all_papers)
@@ -96,24 +91,23 @@ class DBLPCrawler(BaseCrawler):
 
         return unique_papers
 
-    def _batch_venues(self, venues: List[str], batch_size: int = VENUE_BATCH_SIZE) -> List[List[str]]:
+    def _batch_venues(self, venues: List[str], batch_size: int = PIPE_BATCH_SIZE) -> List[List[str]]:
         """将 venues 按 batch_size 分组"""
         return [venues[i:i + batch_size] for i in range(0, len(venues), batch_size)]
 
-    def _search_by_venue_batch(self, keywords: List[str], venues_batch: List[str],
+    def _search_by_venue_pipe(self, keywords: List[str], venues: List[str],
                                from_year: Optional[int] = None,
                                to_year: Optional[int] = None) -> List[Dict[str, Any]]:
-        """批量查询多个 venue（合并为一个请求）"""
+        """用管道符合并多个单词 venue 查询（DBLP 支持 venue:A|B|C 语法，不加引号）"""
         try:
             query_keywords = keywords[:10]
             keyword_query = ' OR '.join([f'"{kw}"' for kw in query_keywords])
 
-            # 使用 OR 语法合并多个 venue（引号包裹避免空格截断）
-            venue_query = ' OR '.join([f'venue:"{v}"' for v in venues_batch])
-            query = f'({keyword_query}) AND ({venue_query})'
+            # 管道符合并 venue（不加引号，不含空格的 venue 名才用此方式）
+            venue_part = '|'.join(venues)
+            query = f'({keyword_query}) venue:{venue_part}'
 
-            # 限制最大返回数（DBLP API 上限 1000）
-            max_h = min(self.MAX_RESULTS_PER_VENUE * len(venues_batch), 1000)
+            max_h = min(self.MAX_RESULTS_PER_VENUE * len(venues), 1000)
             params = {
                 'q': query,
                 'format': 'json',
@@ -122,69 +116,47 @@ class DBLPCrawler(BaseCrawler):
             }
 
             if from_year or to_year:
-                year_filter = []
-                year_filter.append(str(from_year) if from_year else '1900')
-                year_filter.append(str(to_year) if to_year else str(datetime.now().year))
-                params['year'] = f'{year_filter[0]}:{year_filter[1]}'
+                y1 = str(from_year) if from_year else '1900'
+                y2 = str(to_year) if to_year else str(datetime.now().year)
+                params['year'] = f'{y1}:{y2}'
 
-            logger.debug(f"DBLP 合并 venue 查询 ({len(venues_batch)} 个): {query[:100]}...")
+            logger.debug(f"DBLP 管道查询 ({len(venues)} 个 venue): {query[:100]}...")
 
             response = self._make_request(self.DBLP_API_URL, params=params)
 
             if response is None:
-                logger.warning(f"DBLP 合并查询失败（{len(venues_batch)} 个 venue）")
+                logger.warning(f"DBLP 管道查询失败（{len(venues)} 个 venue）")
                 return []
 
             if response.status_code != 200:
-                logger.warning(f"DBLP 合并查询返回错误状态码: {response.status_code}")
+                logger.warning(f"DBLP 管道查询返回错误状态码: {response.status_code}")
                 return []
 
             data = response.json()
             papers = []
 
-            if 'result' not in data:
-                return papers
-
-            hits_data = data['result'].get('hits', {})
-            if not hits_data:
-                return papers
-
-            hits = hits_data.get('hit')
-            if not hits:
-                return papers
-
-            if not isinstance(hits, list):
-                hits = [hits]
-
+            hits = self._extract_hits(data)
             for hit in hits:
                 paper = self._parse_entry(hit, from_year, to_year)
                 if paper:
-                    # 确保有 venue 信息（API 通常会返回）
-                    if not paper.get('venue'):
-                        info = hit.get('info', {})
-                        api_venue = info.get('venue', '')
-                        if api_venue:
-                            paper['venue'] = api_venue
                     papers.append(paper)
 
             return papers
 
         except Exception as e:
-            logger.error(f"DBLP 合并 venue 查询失败: {e}")
+            logger.error(f"DBLP 管道 venue 查询失败: {e}")
             return []
 
     def _search_by_venue(self, keywords: List[str], venue: str,
                          from_year: Optional[int] = None,
                          to_year: Optional[int] = None) -> List[Dict[str, Any]]:
-        """按指定 venue 搜索"""
+        """按指定 venue 搜索（用于含空格的 venue 名，不加引号）"""
         try:
-            # 构建查询：关键词 + venue 过滤
-            # 限制关键词数量以避免查询过长
-            query_keywords = keywords[:10]  # 使用前 10 个关键词
+            query_keywords = keywords[:10]
             keyword_query = ' OR '.join([f'"{kw}"' for kw in query_keywords])
 
-            # 使用 DBLP 的 venue: 语法进行服务端过滤（引号包裹 venue 名）
-            query = f'({keyword_query}) venue:"{venue}"'
+            # 不加引号（经测试 venue:"xxx" 会返回 0 结果）
+            query = f'({keyword_query}) venue:{venue}'
             params = {
                 'q': query,
                 'format': 'json',
@@ -192,18 +164,10 @@ class DBLPCrawler(BaseCrawler):
                 'c': 0
             }
 
-            # 添加年份过滤
             if from_year or to_year:
-                year_filter = []
-                if from_year:
-                    year_filter.append(str(from_year))
-                else:
-                    year_filter.append('1900')
-                if to_year:
-                    year_filter.append(str(to_year))
-                else:
-                    year_filter.append(str(datetime.now().year))
-                params['year'] = f'{year_filter[0]}:{year_filter[1]}'
+                y1 = str(from_year) if from_year else '1900'
+                y2 = str(to_year) if to_year else str(datetime.now().year)
+                params['year'] = f'{y1}:{y2}'
 
             logger.debug(f"DBLP venue 查询: {query[:100]}...")
 
@@ -220,28 +184,12 @@ class DBLPCrawler(BaseCrawler):
             data = response.json()
             papers = []
 
-            # 检查是否有结果
-            if 'result' not in data:
-                logger.debug(f"DBLP venue '{venue}' 无结果")
-                return papers
-
-            hits_data = data['result'].get('hits', {})
-            if not hits_data:
-                logger.debug(f"DBLP venue '{venue}' hits 为空")
-                return papers
-
-            # 获取 hit 列表
-            hits = hits_data.get('hit')
-            if not hits:
-                logger.debug(f"DBLP venue '{venue}' 没有命中")
-                return papers
-
-            if not isinstance(hits, list):
-                hits = [hits]
-
+            hits = self._extract_hits(data)
             for hit in hits:
-                paper = self._parse_venue_entry(hit, venue, from_year, to_year)
+                paper = self._parse_entry(hit, from_year, to_year)
                 if paper:
+                    if not paper.get('venue'):
+                        paper['venue'] = venue
                     papers.append(paper)
 
             return papers
@@ -255,33 +203,22 @@ class DBLPCrawler(BaseCrawler):
                        to_year: Optional[int] = None) -> List[Dict[str, Any]]:
         """通用查询（不指定 venue）"""
         try:
-            # 构建组合查询：关键词1 OR 关键词2 OR ...
-            # 使用 DBLP 的 OR 语法
             query = ' OR '.join([f'"{kw}"' for kw in keywords])
 
             params = {
                 'q': query,
                 'format': 'json',
-                'h': self.max_results,  # 一次请求获取最大结果数
-                'c': 0  # 从第一条开始
+                'h': self.max_results,
+                'c': 0
             }
 
-            # 添加年份过滤（DBLP API 支持 year 参数）
             if from_year or to_year:
-                year_filter = []
-                if from_year:
-                    year_filter.append(str(from_year))
-                else:
-                    year_filter.append('1900')
-                if to_year:
-                    year_filter.append(str(to_year))
-                else:
-                    year_filter.append(str(datetime.now().year))
-
-                params['year'] = f'{year_filter[0]}:{year_filter[1]}'
+                y1 = str(from_year) if from_year else '1900'
+                y2 = str(to_year) if to_year else str(datetime.now().year)
+                params['year'] = f'{y1}:{y2}'
                 logger.info(f"DBLP 年份过滤: {params['year']}")
 
-            logger.info(f"DBLP 组合搜索查询: {query[:200]}...")  # 截断日志避免过长
+            logger.info(f"DBLP 组合搜索查询: {query[:200]}...")
 
             response = self._make_request(self.DBLP_API_URL, params=params)
 
@@ -294,21 +231,13 @@ class DBLPCrawler(BaseCrawler):
                 return []
 
             data = response.json()
-
-            # 解析结果
             all_papers = []
-            if 'result' in data:
-                hits_data = data['result'].get('hits', {})
-                if hits_data:
-                    hits = hits_data.get('hit')
-                    if hits:
-                        if not isinstance(hits, list):
-                            hits = [hits]
 
-                        for hit in hits:
-                            paper = self._parse_entry(hit, from_year, to_year)
-                            if paper:
-                                all_papers.append(paper)
+            hits = self._extract_hits(data)
+            for hit in hits:
+                paper = self._parse_entry(hit, from_year, to_year)
+                if paper:
+                    all_papers.append(paper)
 
             logger.info(f"从 DBLP 获取到 {len(all_papers)} 篇论文")
             return all_papers
@@ -317,10 +246,24 @@ class DBLPCrawler(BaseCrawler):
             logger.error(f"DBLP API 请求失败: {e}")
             return []
 
+    def _extract_hits(self, data: dict) -> list:
+        """从 DBLP API 响应中提取 hits 列表"""
+        if 'result' not in data:
+            return []
+        hits_data = data['result'].get('hits', {})
+        if not hits_data:
+            return []
+        hits = hits_data.get('hit')
+        if not hits:
+            return []
+        if not isinstance(hits, list):
+            hits = [hits]
+        return hits
+
     def _parse_entry(self, hit: Dict,
                      from_year: Optional[int] = None,
                      to_year: Optional[int] = None) -> Dict[str, Any]:
-        """解析单个论文条目（不需要 venue 过滤，已服务端过滤）"""
+        """解析单个论文条目"""
         try:
             info = hit.get('info', {})
 
@@ -332,7 +275,7 @@ class DBLPCrawler(BaseCrawler):
                     authors_data = [authors_data]
                 authors = [a.get('text', '') for a in authors_data]
 
-            # 提取 venue（信息保留，不再过滤）
+            # 提取 venue
             venue = info.get('venue', '')
 
             # 提取年份
@@ -346,19 +289,16 @@ class DBLPCrawler(BaseCrawler):
             # 时间范围过滤
             if year:
                 if from_year and year < from_year:
-                    return None  # 年份太早
+                    return None
                 if to_year and year > to_year:
-                    return None  # 年份太晚
+                    return None
 
             # 提取 URL
             url = info.get('url', '')
-            ee = info.get('ee', '')  # 电子版链接
+            ee = info.get('ee', '')
             final_url = ee if ee else url
 
-            # DBLP 通常不直接提供 PDF，需要从会议页面获取
-            pdf_url = None
-
-            # 提取发布日期（DBLP 只有年份）
+            # 提取发布日期
             published_date = None
             if year:
                 try:
@@ -366,7 +306,7 @@ class DBLPCrawler(BaseCrawler):
                 except ValueError:
                     pass
 
-            # 提取来源 ID（DBLP URL 的最后一部分）
+            # 提取来源 ID
             source_id = None
             if url:
                 source_id = url.rstrip('/').split('/')[-1]
@@ -380,24 +320,13 @@ class DBLPCrawler(BaseCrawler):
                 'year': year,
                 'venue': venue,
                 'url': final_url,
-                'pdf_url': pdf_url,
+                'pdf_url': None,
                 'published_date': published_date
             }
 
         except Exception as e:
             logger.warning(f"解析 DBLP 条目失败: {e}")
             return None
-
-    def _parse_venue_entry(self, hit: Dict, venue: str,
-                           from_year: Optional[int] = None,
-                           to_year: Optional[int] = None) -> Dict[str, Any]:
-        """解析来自 venue 查询的论文条目（已服务端过滤，不需要再次验证 venue）"""
-        # 复用 _parse_entry，但确保 venue 字段正确
-        paper = self._parse_entry(hit, from_year, to_year)
-        if paper and not paper.get('venue'):
-            # 如果 API 返回的 venue 为空，使用查询的 venue
-            paper['venue'] = venue
-        return paper
 
     def _deduplicate_papers(self, papers: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """按 source_id 去重"""
@@ -407,12 +336,11 @@ class DBLPCrawler(BaseCrawler):
             if source_id and source_id not in seen:
                 seen[source_id] = paper
             elif not source_id:
-                # 没有 source_id 的使用 title 去重
                 title = paper.get('title', '')
                 if title and title not in seen:
                     seen[title] = paper
         return list(seen.values())
 
     def normalize_paper(self, raw_paper: Dict[str, Any], source: str = 'dblp') -> Dict[str, Any]:
-        """标准化论文数据（已集成在 _parse_entry 中）"""
+        """标准化论文数据"""
         return raw_paper

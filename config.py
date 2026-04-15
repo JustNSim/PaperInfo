@@ -155,51 +155,34 @@ class Config:
                 'cs.SC',      # Symbolic Computation
                 'cs.IT'       # Information Theory
             ],
-            # CCF-A 类会议/期刊：安全、软工、AI、网络、分布式（不含密码学）
+            # CCF-A 类会议/期刊：只保留 DBLP 能识别的短名，去掉冗余全名别名
             'ccf_venues': [
                 # === 安全领域会议 (CCF-A) ===
-                'IEEE S&P', 'Oakland', 'IEEE Symposium on Security and Privacy',
-                'ACM CCS', 'ACM Conference on Computer and Communications Security',
-                'USENIX Security', 'Usenix Security Symposium',
-                'NDSS', 'Network and Distributed System Security Symposium',
+                'IEEE S&P', 'USENIX Security', 'NDSS',
 
                 # === 安全领域期刊 (CCF-A) ===
-                'IEEE TDSC', 'IEEE Transactions on Dependable and Secure Computing',
-                'IEEE TIFS', 'IEEE Transactions on Information Forensics and Security',
-                'ACM TIFS', 'ACM Transactions on Information and System Security',
+                'IEEE TDSC', 'IEEE TIFS',
 
                 # === 软件工程会议 (CCF-A) ===
-                'ICSE', 'International Conference on Software Engineering',
-                'FSE', 'ESEC/FSE', 'ACM SIGSOFT Symposium on the Foundations of Software Engineering',
-                'ASE', 'International Conference on Automated Software Engineering',
-                'ISSTA', 'International Symposium on Software Testing and Analysis',
-                'OOPSLA', 'Object-Oriented Programming, Systems, Languages & Applications',
+                'ICSE', 'FSE', 'ASE', 'ISSTA', 'OOPSLA',
 
                 # === 软件工程期刊 (CCF-A) ===
-                'IEEE TSE', 'IEEE Transactions on Software Engineering',
-                'ACM TOSEM', 'ACM Transactions on Software Engineering and Methodology',
+                'IEEE TSE', 'ACM TOSEM',
 
                 # === AI会议 (CCF-A) ===
                 'AAAI', 'IJCAI', 'ICML', 'NeurIPS', 'ACL',
 
                 # === AI期刊 (CCF-A) ===
-                'IEEE TPAMI', 'IEEE Transactions on Pattern Analysis and Machine Intelligence',
-                'JMLR', 'Journal of Machine Learning Research',
+                'IEEE TPAMI', 'JMLR',
 
                 # === 网络/系统会议 (CCF-A) ===
-                'SIGCOMM', 'MobiCom',
-                'OSDI', 'USENIX Symposium on Operating Systems Design and Implementation',
-                'SOSP', 'ACM Symposium on Operating Systems Principles',
+                'SIGCOMM', 'MobiCom', 'OSDI', 'SOSP',
 
                 # === 网络期刊 (CCF-A) ===
-                'IEEE JSAC', 'Journal on Selected Areas in Communications',
-                'IEEE TWC', 'IEEE Transactions on Wireless Communications',
-                'IEEE TMC', 'IEEE Transactions on Mobile Computing',
+                'IEEE JSAC', 'IEEE TWC', 'IEEE TMC',
 
                 # === 交叉领域会议 (CCF-A) ===
-                'WWW', 'The Web Conference', 'International World Wide Web Conferences',
-                'CAI', 'ACM International Conference on AI',
-                'SEC', 'ACM Conference on Data and Application Security and Privacy'
+                'WWW', 'CAI', 'SEC'
             ]
         },
         {
@@ -215,8 +198,8 @@ class Config:
                 'cs.LG'   # Machine Learning
             ],
             'ccf_venues': [
-                # 软件工程会议 (CCF-A)
-                'ICSE', 'FSE', 'ESEC/FSE', 'ASE', 'ISSTA', 'OOPSLA',
+                # 软件工程会议 (CCF-A) — 只保留 DBLP 短名
+                'ICSE', 'FSE', 'ASE', 'ISSTA', 'OOPSLA',
                 'IEEE TSE', 'ACM TOSEM',
                 # AI会议 (CCF-A)
                 'AAAI', 'IJCAI', 'ICML', 'NeurIPS', 'ACL'
