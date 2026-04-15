@@ -148,8 +148,23 @@ def register_routes(app):
         pagination = query.paginate(page=page, per_page=per_page, error_out=False)
         papers = pagination.items
 
-        # 获取所有领域
+        # 获取所有启用的领域（用于筛选下拉框）
         domains = Domain.query.filter_by(enabled=True).all()
+
+        # 获取所有领域（含禁用的，用于领域管理面板）
+        all_domains = Domain.query.order_by(Domain.enabled.desc(), Domain.name.asc()).all()
+
+        # 计算每个领域的上次更新时间和论文数
+        domain_last_updates = {}
+        domain_paper_counts = {}
+        for d in all_domains:
+            last_log = UpdateLog.query.filter(
+                UpdateLog.trigger_type.in_(['scheduled', 'manual']),
+                UpdateLog.status == 'success',
+                UpdateLog.domains_processed.contains([d.id])
+            ).order_by(UpdateLog.trigger_time.desc()).first()
+            domain_last_updates[d.id] = last_log.trigger_time if last_log else None
+            domain_paper_counts[d.id] = d.papers.count()
 
         # 获取可用年份列表
         years = db.session.query(Paper.year).filter(
@@ -202,7 +217,10 @@ def register_routes(app):
                              last_update=last_update,
                              next_run=next_run,
                              update_logs=update_logs,
-                             update_log_id=update_log_id)
+                             update_log_id=update_log_id,
+                             all_domains=all_domains,
+                             domain_last_updates=domain_last_updates,
+                             domain_paper_counts=domain_paper_counts)
 
     @app.route('/api/papers')
     def api_papers():

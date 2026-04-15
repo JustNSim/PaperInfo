@@ -96,7 +96,7 @@ class ArxivCrawler(BaseCrawler):
                 all_papers.extend(batch_papers)
                 logger.info(f"扩展第 {i} 批获取 {len(batch_papers)} 篇论文，累计 {len(all_papers)} 篇")
         else:
-            logger.info(f"核心关键词结果充足 ({len(all_papers)} 篇)，跳过扩展关键词查询")
+            logger.info(f"无扩展关键词，跳过扩展查询（核心词获取 {len(all_papers)} 篇）")
 
         # 去重（按 source_id）
         unique_papers = self._deduplicate_papers(all_papers)
