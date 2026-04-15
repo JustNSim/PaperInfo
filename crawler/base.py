@@ -33,19 +33,18 @@ class BaseCrawler(ABC):
         self.timeout = timeout
         self.max_retries = max_retries
         self._last_request_time = 0
+        self._consecutive_failures = 0  # 连续失败计数，用于自适应延迟
         self._session = self._create_session()
 
     def _create_session(self) -> requests.Session:
-        """创建带有重试机制的请求会话"""
+        """创建请求会话（重试由 _make_request 手动处理，禁用 urllib3 层重试避免双重重试放大）"""
         session = requests.Session()
 
-        # 配置重试策略
+        # 禁用 urllib3 层重试，由 _make_request 的手动重试层统一处理
+        # 这样避免 urllib3 重试 + 手动重试 = 最多 9 次实际请求的问题
         retry_strategy = Retry(
-            total=self.max_retries,
-            backoff_factor=self.DEFAULT_RETRY_BACKOFF_FACTOR,
-            status_forcelist=self.DEFAULT_RETRY_STATUS_CODES,
-            allowed_methods=["GET", "POST"],
-            raise_on_status=False,  # 不自动抛出异常，让我们手动处理
+            total=0,
+            raise_on_status=False,
         )
 
         adapter = HTTPAdapter(
@@ -69,10 +68,15 @@ class BaseCrawler(ABC):
         return session
 
     def _wait_for_rate_limit(self):
-        """确保遵守请求频率限制"""
+        """确保遵守请求频率限制（自适应：连续失败时动态增加延迟）"""
+        # 自适应延迟：连续失败时指数增长，上限 30 秒
+        effective_delay = min(self.delay * (2 ** self._consecutive_failures), 30)
+        if effective_delay > self.delay:
+            logger.debug(f"自适应延迟: {effective_delay:.1f} 秒 (连续失败 {self._consecutive_failures} 次)")
+
         elapsed = time.time() - self._last_request_time
-        if elapsed < self.delay:
-            sleep_time = self.delay - elapsed
+        if elapsed < effective_delay:
+            sleep_time = effective_delay - elapsed
             logger.debug(f"等待 {sleep_time:.1f} 秒以遵守频率限制")
             time.sleep(sleep_time)
         self._last_request_time = time.time()
@@ -118,7 +122,7 @@ class BaseCrawler(ABC):
                         timeout=self.timeout
                     )
 
-                # 处理 429 错误（频率限制）
+                # 处理 429 错误（频率限制）— 不增加 consecutive_failures，429 已有显式退避
                 if response.status_code == 429:
                     retry_after = response.headers.get('Retry-After')
                     if retry_after:
@@ -138,7 +142,7 @@ class BaseCrawler(ABC):
                         logger.error(f"达到最大重试次数，放弃请求: {url}")
                         return response
 
-                # 处理其他服务器错误
+                # 处理其他服务器错误 — 不增加 consecutive_failures，已有显式退避
                 if response.status_code >= 500:
                     if attempt < self.max_retries:
                         wait_time = (2 ** attempt) * 3
@@ -149,10 +153,13 @@ class BaseCrawler(ABC):
                         logger.error(f"达到最大重试次数，服务器错误: {response.status_code}")
                         return response
 
+                # 请求成功，重置连续失败计数
+                self._consecutive_failures = 0
                 return response
 
             except requests.exceptions.ConnectionError as e:
                 last_exception = e
+                self._consecutive_failures += 1
                 if attempt < self.max_retries:
                     wait_time = (2 ** attempt) * 5
                     logger.warning(f"连接错误: {e}，等待 {wait_time} 秒后重试 (尝试 {attempt + 1}/{self.max_retries})")
@@ -164,6 +171,7 @@ class BaseCrawler(ABC):
 
             except requests.exceptions.Timeout as e:
                 last_exception = e
+                self._consecutive_failures += 1
                 if attempt < self.max_retries:
                     wait_time = (2 ** attempt) * 3
                     logger.warning(f"请求超时，等待 {wait_time} 秒后重试 (尝试 {attempt + 1}/{self.max_retries})")
@@ -173,6 +181,7 @@ class BaseCrawler(ABC):
 
             except requests.RequestException as e:
                 last_exception = e
+                self._consecutive_failures += 1
                 logger.error(f"请求异常: {e}")
                 if attempt < self.max_retries:
                     time.sleep(5)

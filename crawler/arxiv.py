@@ -21,7 +21,7 @@ class ArxivCrawler(BaseCrawler):
     # 每批查询获取的最大结果数
     MAX_RESULTS_PER_BATCH = 100
     # 最低相关性分数（0-100）
-    MIN_RELEVANCE_SCORE = 15  # 必须包含核心关键词或多个关键词
+    MIN_RELEVANCE_SCORE = 25  # 必须包含核心关键词或多个关键词
     # arXiv 建议的请求间隔（秒）
     DEFAULT_DELAY = 4.0
 
@@ -34,6 +34,9 @@ class ArxivCrawler(BaseCrawler):
                **kwargs) -> List[Dict[str, Any]]:
         """
         搜索 arXiv 论文（支持分批查询和时间过滤）
+
+        优化策略：将关键词分为核心词和扩展词，优先搜索核心词，
+        核心词结果足够时跳过扩展词查询，减少 API 请求次数。
 
         Args:
             keywords: 搜索关键词列表
@@ -48,40 +51,52 @@ class ArxivCrawler(BaseCrawler):
         max_results = kwargs.get('max_results', self.max_results)
         all_papers = []
 
-        # 分批查询关键词
-        batches = self._batch_keywords(keywords, self.KEYWORD_BATCH_SIZE)
-        total_batches = len(batches)
-
-        logger.info(f"开始分批查询 arXiv: {len(keywords)} 个关键词，分为 {total_batches} 批")
         if from_date:
             logger.info(f"时间过滤: 从 {from_date.strftime('%Y-%m-%d')} 开始")
         if to_date:
             logger.info(f"时间过滤: 到 {to_date.strftime('%Y-%m-%d')} 结束")
 
-        for i, batch in enumerate(batches, 1):
-            logger.info(f"处理第 {i}/{total_batches} 批关键词: {batch[:3]}{'...' if len(batch) > 3 else ''}")
+        # 区分核心关键词和扩展关键词
+        # 核心关键词：前 15 个（第一批），扩展关键词：剩余的
+        core_keywords = keywords[:self.KEYWORD_BATCH_SIZE]
+        extended_keywords = keywords[self.KEYWORD_BATCH_SIZE:]
 
-            batch_papers = self._search_batch(batch, categories, self.MAX_RESULTS_PER_BATCH,
-                                              from_date=from_date, to_date=to_date)
+        # 优先搜索核心关键词
+        logger.info(f"搜索核心关键词 ({len(core_keywords)} 个)")
+        core_papers = self._search_batch(core_keywords, categories, self.MAX_RESULTS_PER_BATCH,
+                                         from_date=from_date, to_date=to_date)
+        all_papers.extend(core_papers)
+        logger.info(f"核心关键词获取 {len(core_papers)} 篇论文")
 
-            # 根据剩余配额调整结果数量
+        # 只有核心词结果不足时，才查询扩展关键词
+        if extended_keywords and len(all_papers) < max_results:
             remaining_quota = max_results - len(all_papers)
-            if remaining_quota <= 0:
-                logger.info(f"已达到最大结果数限制 ({max_results})，停止查询")
-                break
+            batches = self._batch_keywords(extended_keywords, self.KEYWORD_BATCH_SIZE)
+            logger.info(f"核心结果不足 ({len(all_papers)}/{max_results})，查询扩展关键词 ({len(extended_keywords)} 个，{len(batches)} 批)")
 
-            # 如果这批结果超过剩余配额，只保留需要的部分
-            if len(batch_papers) > remaining_quota:
-                batch_papers = batch_papers[:remaining_quota]
-
-            all_papers.extend(batch_papers)
-            logger.info(f"第 {i} 批获取 {len(batch_papers)} 篇论文，累计 {len(all_papers)} 篇")
-
-            # 批次之间额外等待，避免触发频率限制
-            if i < total_batches:
+            for i, batch in enumerate(batches, 1):
+                # 批次之间等待
                 extra_wait = 2.0
                 logger.debug(f"批次间额外等待 {extra_wait} 秒")
                 time.sleep(extra_wait)
+
+                logger.info(f"处理扩展关键词第 {i}/{len(batches)} 批: {batch[:3]}{'...' if len(batch) > 3 else ''}")
+
+                batch_papers = self._search_batch(batch, categories, self.MAX_RESULTS_PER_BATCH,
+                                                  from_date=from_date, to_date=to_date)
+
+                remaining_quota = max_results - len(all_papers)
+                if remaining_quota <= 0:
+                    logger.info(f"已达到最大结果数限制 ({max_results})，停止查询")
+                    break
+
+                if len(batch_papers) > remaining_quota:
+                    batch_papers = batch_papers[:remaining_quota]
+
+                all_papers.extend(batch_papers)
+                logger.info(f"扩展第 {i} 批获取 {len(batch_papers)} 篇论文，累计 {len(all_papers)} 篇")
+        else:
+            logger.info(f"核心关键词结果充足 ({len(all_papers)} 篇)，跳过扩展关键词查询")
 
         # 去重（按 source_id）
         unique_papers = self._deduplicate_papers(all_papers)
@@ -192,22 +207,18 @@ class ArxivCrawler(BaseCrawler):
         计算论文与关键词的相关性分数 (0-100)
 
         评分规则:
-        - 必须包含核心关键词，否则直接返回 0 分
+        - 核心关键词 = 传入 keywords 的前 10 个，必须至少匹配一个
         - 标题中完整匹配核心关键词: +30 分
         - 标题中完整匹配其他关键词: +15 分
-        - 标题中部分匹配: +5 分
-        - 摘要匹配: +1~3 分
-        - 包含负面关键词: -50 分
+        - 摘要匹配: +2 分/个
+        - 包含负面关键词: 返回 0 分
         """
         score = 0
         title = paper.get('title', '').lower()
         abstract = (paper.get('abstract') or '').lower()
 
-        # 核心关键词（必须包含至少一个）
-        core_keywords = {'blockchain', 'smart contract', 'cryptocurrency', 'bitcoin',
-                        'ethereum', 'solidity', 'defi', 'nft', 'dao', 'zk-snark',
-                        'zk-stark', 'merkle tree', 'byzantine', 'pbft', 'sharding',
-                        'rollup', 'sidechain', 'reentrancy', 'flash loan'}
+        # 核心关键词：从传入的 keywords 动态取前 10 个
+        core_keywords = {kw.lower() for kw in keywords[:10]}
 
         # 负面关键词（包含这些说明论文不相关）
         negative_keywords = {'traffic signal', 'manufacturing', 'battery', 'state of health',

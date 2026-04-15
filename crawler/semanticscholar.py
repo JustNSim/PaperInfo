@@ -22,7 +22,7 @@ class SemanticScholarCrawler(BaseCrawler):
     # 每次请求最多返回的论文数
     MAX_RESULTS_PER_REQUEST = 100
     # 最低相关性分数
-    MIN_RELEVANCE_SCORE = 10
+    MIN_RELEVANCE_SCORE = 20
 
     def __init__(self, delay: float = DEFAULT_DELAY, timeout: int = 30, max_results: int = 100):
         super().__init__(delay=delay, timeout=timeout)

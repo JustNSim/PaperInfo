@@ -720,6 +720,7 @@ def check_and_catch_up():
     1. 获取最后一次成功的定时更新记录
     2. 计算今天应该执行的时间
     3. 如果当前时间已过今天的执行时间，且最后一次更新早于今天，则补执行
+    4. 通过数据库检查防止多实例重复补执行
     """
     global flask_app
 
@@ -730,6 +731,16 @@ def check_and_catch_up():
     try:
         with flask_app.app_context():
             now = get_beijing_time()
+
+            # 防重复：检查最近 30 分钟内是否有任何更新记录（包括手动触发的）
+            recent_update = UpdateLog.query.filter(
+                UpdateLog.status == 'success',
+                UpdateLog.trigger_time > now - timedelta(minutes=30)
+            ).first()
+            if recent_update:
+                logger.debug(f"最近 30 分钟内已有更新记录 ({recent_update.trigger_time.strftime('%Y-%m-%d %H:%M')})，跳过补执行")
+                return False
+
             today_scheduled = now.replace(
                 hour=Config.SCHEDULE_HOUR,
                 minute=Config.SCHEDULE_MINUTE,
