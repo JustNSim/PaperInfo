@@ -7,7 +7,7 @@ import json
 import queue
 import threading
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from flask import Flask, render_template, request, jsonify, Response, stream_with_context
 from sqlalchemy.exc import IntegrityError
 
@@ -90,9 +90,22 @@ def register_routes(app):
         sources = request.args.getlist('source')  # 支持多个source参数
         year = request.args.get('year', type=int)
         sort = request.args.get('sort', 'date')  # date, title, score_desc, score_asc
+        update_log_id = request.args.get('update_log', type=int)  # 按更新事件筛选
 
         # 构建查询
         query = Paper.query
+
+        # 按更新事件筛选：查询该次更新新增的论文
+        selected_update_log = None
+        if update_log_id:
+            selected_update_log = UpdateLog.query.get(update_log_id)
+            if selected_update_log:
+                # 使用该更新日志的时间范围筛选论文
+                update_time = selected_update_log.trigger_time
+                query = query.filter(
+                    Paper.fetched_date >= update_time - timedelta(minutes=5),
+                    Paper.fetched_date <= update_time + timedelta(minutes=5)
+                )
 
         # 领域过滤
         if domain_id:
@@ -165,6 +178,13 @@ def register_routes(app):
         if get_next_run_time():
             next_run = get_next_run_time().strftime('%Y-%m-%d %H:%M')
 
+        # 获取更新事件列表（用于筛选下拉框）
+        update_logs = UpdateLog.query.filter(
+            UpdateLog.trigger_type.in_(['scheduled', 'manual']),
+            UpdateLog.status == 'success',
+            UpdateLog.total_new > 0
+        ).order_by(UpdateLog.trigger_time.desc()).limit(30).all()
+
         return render_template('index.html',
                              papers=papers,
                              domains=domains,
@@ -180,7 +200,9 @@ def register_routes(app):
                              total_pages=pagination.pages,
                              query_string=query_string,
                              last_update=last_update,
-                             next_run=next_run)
+                             next_run=next_run,
+                             update_logs=update_logs,
+                             update_log_id=update_log_id)
 
     @app.route('/api/papers')
     def api_papers():

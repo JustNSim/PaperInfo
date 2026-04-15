@@ -88,7 +88,27 @@
                                         {% endif %}
                                     </td>
                                     <td>
-                                        {% if log.trigger_type == 'data_cleared' %}
+                                        {% if log.trigger_type == 'scheduled' or log.trigger_type == 'manual' %}
+                                        <small>
+                                            {% if log.status == 'success' %}
+                                            <span class="text-success">
+                                                <i class="bi bi-plus-circle"></i>
+                                                新增 {{ log.total_new|default(0) }} 篇
+                                            </span>
+                                            {% if log.llm_filtered and log.llm_filtered > 0 %}
+                                            <br><span class="text-warning">
+                                                <i class="bi bi-funnel"></i>
+                                                LLM 过滤 {{ log.llm_filtered }} 篇
+                                            </span>
+                                            {% endif %}
+                                            {% elif log.status == 'failed' %}
+                                            <span class="text-danger">
+                                                <i class="bi bi-x-circle"></i>
+                                                {{ log.error_message[:80] if log.error_message else '未知错误' }}
+                                            </span>
+                                            {% endif %}
+                                        </small>
+                                        {% elif log.trigger_type == 'data_cleared' %}
                                         <small class="text-warning">
                                             <i class="bi bi-exclamation-triangle"></i>
                                             清空了 {{ log.source_stats.cleared_papers }} 篇论文

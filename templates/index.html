@@ -62,6 +62,21 @@
                     </select>
                 </div>
 
+                <!-- 更新事件筛选 -->
+                {% if update_logs %}
+                <div class="mb-3">
+                    <label class="form-label fw-bold">更新批次</label>
+                    <select class="form-select" id="updateLogFilter" name="update_log">
+                        <option value="">全部</option>
+                        {% for ulog in update_logs %}
+                        <option value="{{ ulog.id }}" {% if update_log_id == ulog.id %}selected{% endif %}>
+                            {{ ulog.trigger_time.strftime('%m-%d %H:%M') }} +{{ ulog.total_new }}篇
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                {% endif %}
+
                 <button class="btn btn-primary w-100" onclick="applyFilters()">
                     <i class="bi bi-check-circle"></i> 应用筛选
                 </button>
@@ -387,6 +402,10 @@ function applyFilters() {
     // 年份
     const year = document.getElementById('yearFilter').value;
     if (year) params.set('year', year);
+
+    // 更新批次
+    const updateLogEl = document.getElementById('updateLogFilter');
+    if (updateLogEl && updateLogEl.value) params.set('update_log', updateLogEl.value);
 
     // 排序
     const sort = '{{ request.args.get('sort', 'date') }}';
