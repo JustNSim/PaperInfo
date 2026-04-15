@@ -44,7 +44,29 @@
 
     <!-- 图表区域 -->
     <div class="row mb-4">
-        <div class="col-md-6">
+        <div class="col-md-4">
+            <div class="card">
+                <div class="card-header">
+                    <h6 class="mb-0"><i class="bi bi-bar-chart"></i> 年份分布</h6>
+                </div>
+                <div class="card-body">
+                    <canvas id="yearChart"></canvas>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card">
+                <div class="card-header">
+                    <h6 class="mb-0"><i class="bi bi-diagram-3"></i> 研究领域分布</h6>
+                </div>
+                <div class="card-body">
+                    <div style="height: 250px; display: flex; justify-content: center;">
+                        <canvas id="domainChart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
             <div class="card">
                 <div class="card-header">
                     <h6 class="mb-0"><i class="bi bi-pie-chart"></i> 数据源分布</h6>
@@ -53,16 +75,6 @@
                     <div style="height: 250px; display: flex; justify-content: center;">
                         <canvas id="sourceChart"></canvas>
                     </div>
-                </div>
-            </div>
-        </div>
-        <div class="col-md-6">
-            <div class="card">
-                <div class="card-header">
-                    <h6 class="mb-0"><i class="bi bi-bar-chart"></i> 年份分布</h6>
-                </div>
-                <div class="card-body">
-                    <canvas id="yearChart"></canvas>
                 </div>
             </div>
         </div>
@@ -104,7 +116,7 @@
 {% block scripts %}
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script>
-let sourceChart, yearChart;
+let sourceChart, yearChart, domainChart;
 
 // 加载统计数据
 async function loadStats() {
@@ -123,6 +135,11 @@ async function loadStats() {
 
         // 绘制年份柱状图
         drawYearChart(data.by_year);
+
+        // 绘制研究领域分布图
+        if (data.domains && data.domains.length > 0) {
+            drawDomainChart(data.domains);
+        }
 
         // 更新最近论文表格
         updateRecentPapers(data.recent_papers);
@@ -209,6 +226,49 @@ function drawYearChart(yearData) {
             plugins: {
                 legend: {
                     display: false
+                }
+            }
+        }
+    });
+}
+
+// 绘制研究领域分布饼图
+function drawDomainChart(domains) {
+    const ctx = document.getElementById('domainChart').getContext('2d');
+
+    if (domainChart) {
+        domainChart.destroy();
+    }
+
+    const labels = domains.map(d => d.name);
+    const data = domains.map(d => d.total);
+    const colors = ['#0d6efd', '#dc3545', '#198754', '#ffc107', '#0dcaf0', '#6610f2', '#fd7e14'];
+
+    domainChart = new Chart(ctx, {
+        type: 'doughnut',
+        data: {
+            labels: labels,
+            datasets: [{
+                data: data,
+                backgroundColor: colors.slice(0, labels.length),
+                borderWidth: 2,
+                borderColor: '#fff'
+            }]
+        },
+        options: {
+            responsive: true,
+            plugins: {
+                legend: {
+                    position: 'bottom'
+                },
+                tooltip: {
+                    callbacks: {
+                        label: function(context) {
+                            const total = context.dataset.data.reduce((a, b) => a + b, 0);
+                            const pct = total > 0 ? ((context.parsed / total) * 100).toFixed(1) : 0;
+                            return `${context.label}: ${context.parsed} 篇 (${pct}%)`;
+                        }
+                    }
                 }
             }
         }
