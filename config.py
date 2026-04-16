@@ -28,8 +28,14 @@ class Config:
     ARXIV_DELAY = 4                 # arXiv API 请求间隔（秒）
     DBLP_DELAY = 3                  # DBLP API 请求间隔（秒）
     S2_DELAY = 5                    # Semantic Scholar API 请求间隔（秒）
+    # S2 API Key 轮换：注册 https://www.semanticscholar.org/product/api#api-key-form 获取免费 Key
+    # 多个 Key 逗号分隔，轮换使用（每个 Key 独立限流）
+    S2_API_KEYS = [k.strip() for k in os.environ.get('S2_API_KEYS', '').split(',') if k.strip()]
     MAX_PAPERS_PER_SOURCE = 300     # 每个数据源最大抓取论文数（提高到300以支持分批查询）
     REQUEST_TIMEOUT = 30            # 请求超时时间（秒）
+
+    # DBLP 时间窗口（DBLP 论文批量入库，不适合增量更新）
+    DBLP_YEAR_WINDOW = int(os.environ.get('DBLP_YEAR_WINDOW', '2'))  # 查最近 N 年的论文
 
     # 时间范围配置
     FETCH_DAYS_BACK = 30            # 首次运行获取最近 N 天的论文

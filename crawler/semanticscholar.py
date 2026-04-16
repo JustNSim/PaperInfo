@@ -1,6 +1,7 @@
 """
 Semantic Scholar API 爬虫
 使用 Semantic Scholar Graph API 获取论文信息
+支持多 API Key 轮换以规避限流
 """
 import logging
 import time
@@ -16,17 +17,24 @@ class SemanticScholarCrawler(BaseCrawler):
     """Semantic Scholar API 爬虫"""
 
     S2_API_URL = 'https://api.semanticscholar.org/graph/v1'
-    # Semantic Scholar 速率限制: 每5分钟100次请求（无API key时更严格）
-    # 使用更保守的间隔：5秒一次请求，确保不超限
     DEFAULT_DELAY = 5.0
-    # 每次请求最多返回的论文数
     MAX_RESULTS_PER_REQUEST = 100
-    # 最低相关性分数
     MIN_RELEVANCE_SCORE = 20
 
-    def __init__(self, delay: float = DEFAULT_DELAY, timeout: int = 30, max_results: int = 100):
+    def __init__(self, delay: float = DEFAULT_DELAY, timeout: int = 30,
+                 max_results: int = 100, api_keys: List[str] = None):
         super().__init__(delay=delay, timeout=timeout)
         self.max_results = max_results
+        self._api_keys = api_keys or []
+        self._key_index = 0
+
+    def _get_api_key(self) -> Optional[str]:
+        """获取下一个 API Key（轮换）"""
+        if not self._api_keys:
+            return None
+        key = self._api_keys[self._key_index % len(self._api_keys)]
+        self._key_index += 1
+        return key
 
     def search(self, keywords: List[str], venues: List[str] = None,
                from_year: Optional[int] = None, to_year: Optional[int] = None,
@@ -94,10 +102,15 @@ class SemanticScholarCrawler(BaseCrawler):
             'fields': 'paperId,title,abstract,authors,venue,year,url,publicationDate,publicationTypes'
         }
 
+        headers = {'Accept': 'application/json'}
+        api_key = self._get_api_key()
+        if api_key:
+            headers['x-api-key'] = api_key
+
         response = self._make_request(
             f'{self.S2_API_URL}/paper/search',
             params=params,
-            headers={'Accept': 'application/json'}
+            headers=headers
         )
 
         if response is None:

@@ -292,9 +292,12 @@ def fetch_papers_for_domain(domain: Domain) -> dict:
         if domain.ccf_venues:
             logger.info(f"从 DBLP 抓取 {domain.name} 论文...")
 
-            # 计算年份范围
-            from_year = from_date.year if from_date else None
-            to_year = to_date.year if to_date else None
+            # DBLP 论文批量入库（非每日更新），使用固定宽窗口而非增量时间
+            # 去重由数据库 UNIQUE 约束保证，不会重复入库
+            current_year = get_beijing_time().year
+            from_year = current_year - Config.DBLP_YEAR_WINDOW + 1
+            to_year = current_year
+            logger.info(f"DBLP 年份窗口: {from_year}-{to_year} (最近 {Config.DBLP_YEAR_WINDOW} 年)")
 
             dblp_crawler = DBLPCrawler(
                 delay=Config.DBLP_DELAY,
@@ -312,11 +315,13 @@ def fetch_papers_for_domain(domain: Domain) -> dict:
             result['source_stats']['dblp'] = dblp_count
 
         # 3. 从 Semantic Scholar 抓取
-        logger.info(f"从 Semantic Scholar 抓取 {domain.name} 论文...")
+        key_info = f" ({len(Config.S2_API_KEYS)} 个 API Key 轮换)" if Config.S2_API_KEYS else " (无 API Key)"
+        logger.info(f"从 Semantic Scholar 抓取 {domain.name} 论文...{key_info}")
         s2_crawler = SemanticScholarCrawler(
             delay=Config.S2_DELAY,
             timeout=Config.REQUEST_TIMEOUT,
-            max_results=100
+            max_results=100,
+            api_keys=Config.S2_API_KEYS if Config.S2_API_KEYS else None
         )
         # 使用前 5 个关键词作为核心关键词
         core_keywords = domain.keywords[:5] if domain.keywords else None
