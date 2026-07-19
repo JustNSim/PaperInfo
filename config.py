@@ -35,7 +35,7 @@ class Config:
     REQUEST_TIMEOUT = 30            # 请求超时时间（秒）
 
     # DBLP 时间窗口（DBLP 论文批量入库，不适合增量更新）
-    DBLP_YEAR_WINDOW = int(os.environ.get('DBLP_YEAR_WINDOW', '2'))  # 查最近 N 年的论文
+    DBLP_YEAR_WINDOW = int(os.environ.get('DBLP_YEAR_WINDOW', '3'))  # 查最近 N 年的论文
 
     # 时间范围配置
     FETCH_DAYS_BACK = 30            # 首次运行获取最近 N 天的论文

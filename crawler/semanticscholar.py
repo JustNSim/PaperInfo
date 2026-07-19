@@ -203,48 +203,32 @@ class SemanticScholarCrawler(BaseCrawler):
 
         Args:
             paper: 论文数据
-            core_keywords: 核心关键词列表（如果为 None，使用默认列表）
-
-        S2 覆盖面广，需要严格过滤以避免不相关论文
+            core_keywords: 核心关键词列表（从领域配置传入）
         """
         score = 0
         title = paper.get('title', '').lower()
         abstract = (paper.get('abstract') or '').lower()
 
-        # 默认核心关键词（区块链领域）
-        if core_keywords is None:
-            core_keywords = ['blockchain', 'smart contract', 'cryptocurrency', 'bitcoin',
-                            'ethereum', 'solidity', 'defi', 'nft', 'dao']
+        if not core_keywords:
+            # 没有关键词时无法评估，直接通过
+            return self.MIN_RELEVANCE_SCORE
 
-        # 转换为集合用于查找
         core_set = {kw.lower() for kw in core_keywords}
 
-        # 负面关键词（通用）
-        negative_keywords = {'traffic signal', 'manufacturing', 'battery', 'forecasting',
-                           'recommendation system', 'social network', 'search engine',
-                           'image processing', 'computer vision', 'speech recognition',
-                           'video processing', 'natural language'}
+        # 负面关键词（只保留真正通用的噪音词）
+        negative_keywords = {'traffic signal', 'manufacturing', 'battery', 'state of health'}
 
-        # 检查负面关键词
         for neg_kw in negative_keywords:
             if neg_kw in title or neg_kw in abstract:
                 return 0
 
-        # 核心关键词匹配（高权重）
+        # 核心关键词匹配标题（高权重）
         for core_kw in core_set:
             if core_kw in title:
                 score += 30
                 break
 
-        # 其他关键词匹配（标题）
-        title_words = {'decentralized', 'distributed', 'protocol', 'verification',
-                       'cryptography', 'encryption', 'hash', 'ledger', 'token', 'agent',
-                       'multi-agent', 'repair', 'vulnerability', 'llm', 'code generation'}
-        for word in title_words:
-            if word in title:
-                score += 10
-
-        # 摘要匹配
+        # 核心关键词匹配摘要
         if abstract:
             for core_kw in core_set:
                 if core_kw in abstract:

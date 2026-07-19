@@ -48,6 +48,45 @@ class BaseLLMProvider(ABC):
             time.sleep(self.delay - elapsed)
         self._last_call_time = time.time()
 
+    def _parse_dual_scores(self, content: str) -> tuple:
+        """Parse relevance and value scores from LLM response.
+
+        Expected formats:
+        - "Relevance: 85, Value: 72"
+        - "85, 72" or "85 72"
+        - "Relevance: 85\\nValue: 72"
+        """
+        import re
+
+        patterns = [
+            r'(?:Relevance|相关性|相关度)[:\s]*(\d{1,3})\s*[,，]\s*(?:Value|价值)[:\s]*(\d{1,3})',
+            r'(?:Relevance|相关性|相关度)[:\s]*(\d{1,3})\s*\n\s*(?:Value|价值)[:\s]*(\d{1,3})',
+            # Two numbers separated by comma/Chinese comma (not bare whitespace to avoid splitting "85" → "8","5")
+            r'(\d{1,3})\s*[,，]\s*(\d{1,3})',
+            r'(\d{1,3})\s*\n\s*(\d{1,3})',
+        ]
+
+        for pattern in patterns:
+            match = re.search(pattern, content, re.IGNORECASE)
+            if match:
+                relevance = max(0, min(100, int(match.group(1))))
+                value = max(0, min(100, int(match.group(2))))
+                return relevance, value
+
+        single_match = re.search(r'\b(\d{1,3})\b', content)
+        if single_match:
+            score = max(0, min(100, int(single_match.group(1))))
+            logger.warning(f"Could not parse dual scores from response: {content}, using single score for both")
+            return score, score
+
+        logger.warning(f"Could not parse any scores from response: {content}")
+        return 0, 0
+
+    def _parse_score(self, content: str) -> int:
+        """Parse score from LLM response (legacy compatibility)"""
+        relevance, _ = self._parse_dual_scores(content)
+        return relevance
+
     @abstractmethod
     def evaluate(self, title: str, abstract: str, system_prompt: str) -> EvalResult:
         """Evaluate paper relevance"""
@@ -111,51 +150,6 @@ class OpenAIProvider(BaseLLMProvider):
                 raise RateLimitError(f"OpenAI rate limit exceeded: {e}")
             raise LLMEvaluatorError(f"OpenAI API error: {e}")
 
-    def _parse_dual_scores(self, content: str) -> tuple[int, int]:
-        """Parse relevance and value scores from LLM response
-
-        Expected formats:
-        - "Relevance: 85, Value: 72"
-        - "相关性: 85, 价值: 72"
-        - "85, 72" or "85 72"
-        - "Relevance: 85\nValue: 72"
-        """
-        import re
-
-        # Try to extract both scores using various patterns
-        patterns = [
-            # Pattern 1: "Relevance: 85, Value: 72" or similar
-            r'(?:Relevance|相关性|相关度)[:\s]*(\d{1,3})\s*[,，]\s*(?:Value|价值)[:\s]*(\d{1,3})',
-            # Pattern 2: "Relevance: 85\nValue: 72" or similar
-            r'(?:Relevance|相关性|相关度)[:\s]*(\d{1,3})\s*(?:\n|,)\s*(?:Value|价值)[:\s]*(\d{1,3})',
-            # Pattern 3: Just two numbers separated by comma or space
-            r'(\d{1,3})\s*[,，\s]\s*(\d{1,3})',
-            # Pattern 4: Two scores on separate lines
-            r'(\d{1,3})\s*\n\s*(\d{1,3})',
-        ]
-
-        for pattern in patterns:
-            match = re.search(pattern, content, re.IGNORECASE)
-            if match:
-                relevance = max(0, min(100, int(match.group(1))))
-                value = max(0, min(100, int(match.group(2))))
-                return relevance, value
-
-        # Fallback: try to find any single number and use for both
-        single_match = re.search(r'\b(\d{1,3})\b', content)
-        if single_match:
-            score = max(0, min(100, int(single_match.group(1))))
-            logger.warning(f"Could not parse dual scores from response: {content}, using single score for both")
-            return score, score
-
-        logger.warning(f"Could not parse any scores from response: {content}")
-        return 0, 0
-
-    def _parse_score(self, content: str) -> int:
-        """Parse score from LLM response (legacy method for compatibility)"""
-        relevance, _ = self._parse_dual_scores(content)
-        return relevance
-
 
 class AnthropicProvider(BaseLLMProvider):
     """Anthropic Claude API provider"""
@@ -214,51 +208,6 @@ class AnthropicProvider(BaseLLMProvider):
                 raise RateLimitError(f"Anthropic rate limit exceeded: {e}")
             raise LLMEvaluatorError(f"Anthropic API error: {e}")
 
-    def _parse_dual_scores(self, content: str) -> tuple[int, int]:
-        """Parse relevance and value scores from LLM response
-
-        Expected formats:
-        - "Relevance: 85, Value: 72"
-        - "相关性: 85, 价值: 72"
-        - "85, 72" or "85 72"
-        - "Relevance: 85\nValue: 72"
-        """
-        import re
-
-        # Try to extract both scores using various patterns
-        patterns = [
-            # Pattern 1: "Relevance: 85, Value: 72" or similar
-            r'(?:Relevance|相关性|相关度)[:\s]*(\d{1,3})\s*[,，]\s*(?:Value|价值)[:\s]*(\d{1,3})',
-            # Pattern 2: "Relevance: 85\nValue: 72" or similar
-            r'(?:Relevance|相关性|相关度)[:\s]*(\d{1,3})\s*(?:\n|,)\s*(?:Value|价值)[:\s]*(\d{1,3})',
-            # Pattern 3: Just two numbers separated by comma or space
-            r'(\d{1,3})\s*[,，\s]\s*(\d{1,3})',
-            # Pattern 4: Two scores on separate lines
-            r'(\d{1,3})\s*\n\s*(\d{1,3})',
-        ]
-
-        for pattern in patterns:
-            match = re.search(pattern, content, re.IGNORECASE)
-            if match:
-                relevance = max(0, min(100, int(match.group(1))))
-                value = max(0, min(100, int(match.group(2))))
-                return relevance, value
-
-        # Fallback: try to find any single number and use for both
-        single_match = re.search(r'\b(\d{1,3})\b', content)
-        if single_match:
-            score = max(0, min(100, int(single_match.group(1))))
-            logger.warning(f"Could not parse dual scores from response: {content}, using single score for both")
-            return score, score
-
-        logger.warning(f"Could not parse any scores from response: {content}")
-        return 0, 0
-
-    def _parse_score(self, content: str) -> int:
-        """Parse score from LLM response (legacy method for compatibility)"""
-        relevance, _ = self._parse_dual_scores(content)
-        return relevance
-
 
 class ZhipuProvider(BaseLLMProvider):
     """Zhipu AI (GLM) API provider"""
@@ -316,51 +265,6 @@ class ZhipuProvider(BaseLLMProvider):
             if "rate_limit" in error_msg.lower() or "429" in error_msg:
                 raise RateLimitError(f"Zhipu AI rate limit exceeded: {e}")
             raise LLMEvaluatorError(f"Zhipu AI API error: {e}")
-
-    def _parse_dual_scores(self, content: str) -> tuple[int, int]:
-        """Parse relevance and value scores from LLM response
-
-        Expected formats:
-        - "Relevance: 85, Value: 72"
-        - "相关性: 85, 价值: 72"
-        - "85, 72" or "85 72"
-        - "Relevance: 85\nValue: 72"
-        """
-        import re
-
-        # Try to extract both scores using various patterns
-        patterns = [
-            # Pattern 1: "Relevance: 85, Value: 72" or similar
-            r'(?:Relevance|相关性|相关度)[:\s]*(\d{1,3})\s*[,，]\s*(?:Value|价值)[:\s]*(\d{1,3})',
-            # Pattern 2: "Relevance: 85\nValue: 72" or similar
-            r'(?:Relevance|相关性|相关度)[:\s]*(\d{1,3})\s*(?:\n|,)\s*(?:Value|价值)[:\s]*(\d{1,3})',
-            # Pattern 3: Just two numbers separated by comma or space
-            r'(\d{1,3})\s*[,，\s]\s*(\d{1,3})',
-            # Pattern 4: Two scores on separate lines
-            r'(\d{1,3})\s*\n\s*(\d{1,3})',
-        ]
-
-        for pattern in patterns:
-            match = re.search(pattern, content, re.IGNORECASE)
-            if match:
-                relevance = max(0, min(100, int(match.group(1))))
-                value = max(0, min(100, int(match.group(2))))
-                return relevance, value
-
-        # Fallback: try to find any single number and use for both
-        single_match = re.search(r'\b(\d{1,3})\b', content)
-        if single_match:
-            score = max(0, min(100, int(single_match.group(1))))
-            logger.warning(f"Could not parse dual scores from response: {content}, using single score for both")
-            return score, score
-
-        logger.warning(f"Could not parse any scores from response: {content}")
-        return 0, 0
-
-    def _parse_score(self, content: str) -> int:
-        """Parse score from LLM response (legacy method for compatibility)"""
-        relevance, _ = self._parse_dual_scores(content)
-        return relevance
 
 
 class CustomOpenAIProvider(BaseLLMProvider):
@@ -430,51 +334,6 @@ class CustomOpenAIProvider(BaseLLMProvider):
             if "rate_limit" in error_msg.lower() or "429" in error_msg:
                 raise RateLimitError(f"Custom API rate limit exceeded: {e}")
             raise LLMEvaluatorError(f"Custom API error: {e}")
-
-    def _parse_dual_scores(self, content: str) -> tuple[int, int]:
-        """Parse relevance and value scores from LLM response
-
-        Expected formats:
-        - "Relevance: 85, Value: 72"
-        - "相关性: 85, 价值: 72"
-        - "85, 72" or "85 72"
-        - "Relevance: 85\nValue: 72"
-        """
-        import re
-
-        # Try to extract both scores using various patterns
-        patterns = [
-            # Pattern 1: "Relevance: 85, Value: 72" or similar
-            r'(?:Relevance|相关性|相关度)[:\s]*(\d{1,3})\s*[,，]\s*(?:Value|价值)[:\s]*(\d{1,3})',
-            # Pattern 2: "Relevance: 85\nValue: 72" or similar
-            r'(?:Relevance|相关性|相关度)[:\s]*(\d{1,3})\s*(?:\n|,)\s*(?:Value|价值)[:\s]*(\d{1,3})',
-            # Pattern 3: Just two numbers separated by comma or space
-            r'(\d{1,3})\s*[,，\s]\s*(\d{1,3})',
-            # Pattern 4: Two scores on separate lines
-            r'(\d{1,3})\s*\n\s*(\d{1,3})',
-        ]
-
-        for pattern in patterns:
-            match = re.search(pattern, content, re.IGNORECASE)
-            if match:
-                relevance = max(0, min(100, int(match.group(1))))
-                value = max(0, min(100, int(match.group(2))))
-                return relevance, value
-
-        # Fallback: try to find any single number and use for both
-        single_match = re.search(r'\b(\d{1,3})\b', content)
-        if single_match:
-            score = max(0, min(100, int(single_match.group(1))))
-            logger.warning(f"Could not parse dual scores from response: {content}, using single score for both")
-            return score, score
-
-        logger.warning(f"Could not parse any scores from response: {content}")
-        return 0, 0
-
-    def _parse_score(self, content: str) -> int:
-        """Parse score from LLM response (legacy method for compatibility)"""
-        relevance, _ = self._parse_dual_scores(content)
-        return relevance
 
 
 class LLMEvaluator:
@@ -623,13 +482,14 @@ class LLMEvaluator:
             )
 
         if not abstract:
-            logger.warning(f"No abstract provided for '{title}', returning score 0")
+            # DBLP 等来源不提供摘要，跳过 LLM 评估直接通过
+            logger.debug(f"No abstract for '{title}', skipping LLM evaluation (pass-through)")
             return EvalResult(
-                relevance_score=0,
-                value_score=0,
+                relevance_score=100,
+                value_score=100,
                 model=self._provider.model if self._provider else "unknown",
                 provider=self.provider_name,
-                error="No abstract provided"
+                raw_response=None
             )
 
         try:

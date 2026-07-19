@@ -46,29 +46,49 @@ def create_app(config_name='default'):
 
 
 def _init_default_domains():
-    """初始化默认领域 - 仅在数据库为空时（首次安装）执行"""
-    # 检查是否已有任何领域
+    """初始化默认领域，并同步已有领域的 venues/keywords/categories"""
     existing_count = Domain.query.count()
-    if existing_count > 0:
-        # 已有领域数据，跳过初始化
-        return
 
-    # 数据库为空，创建默认领域
-    for domain_config in Config.DEFAULT_DOMAINS:
-        domain = Domain(
-            name=domain_config['name'],
-            keywords=domain_config['keywords'],
-            arxiv_categories=domain_config.get('arxiv_categories', []),
-            ccf_venues=domain_config.get('ccf_venues', []),
-            enabled=True
-        )
-        db.session.add(domain)
-    try:
-        db.session.commit()
-        print(f"首次安装：已创建 {len(Config.DEFAULT_DOMAINS)} 个默认领域")
-    except Exception as e:
-        db.session.rollback()
-        print(f"初始化默认领域时出错: {e}")
+    if existing_count == 0:
+        # 数据库为空，创建默认领域
+        for domain_config in Config.DEFAULT_DOMAINS:
+            domain = Domain(
+                name=domain_config['name'],
+                keywords=domain_config['keywords'],
+                arxiv_categories=domain_config.get('arxiv_categories', []),
+                ccf_venues=domain_config.get('ccf_venues', []),
+                enabled=True
+            )
+            db.session.add(domain)
+        try:
+            db.session.commit()
+            print(f"首次安装：已创建 {len(Config.DEFAULT_DOMAINS)} 个默认领域")
+        except Exception as e:
+            db.session.rollback()
+            print(f"初始化默认领域时出错: {e}")
+    else:
+        # 同步已有领域的 ccf_venues/keywords/arxiv_categories（修复旧数据中的全名 venue）
+        updated = 0
+        for domain_config in Config.DEFAULT_DOMAINS:
+            domain = Domain.query.filter_by(name=domain_config['name']).first()
+            if domain:
+                new_venues = domain_config.get('ccf_venues', [])
+                new_keywords = domain_config.get('keywords', [])
+                new_categories = domain_config.get('arxiv_categories', [])
+                if (domain.ccf_venues != new_venues or
+                        domain.keywords != new_keywords or
+                        domain.arxiv_categories != new_categories):
+                    domain.ccf_venues = new_venues
+                    domain.keywords = new_keywords
+                    domain.arxiv_categories = new_categories
+                    updated += 1
+        if updated > 0:
+            try:
+                db.session.commit()
+                print(f"已同步 {updated} 个领域的配置（venues/keywords/categories）")
+            except Exception as e:
+                db.session.rollback()
+                print(f"同步领域配置时出错: {e}")
 
 
 def register_routes(app):

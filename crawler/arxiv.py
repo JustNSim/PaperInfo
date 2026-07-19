@@ -220,10 +220,9 @@ class ArxivCrawler(BaseCrawler):
         # 核心关键词：从传入的 keywords 动态取前 10 个
         core_keywords = {kw.lower() for kw in keywords[:10]}
 
-        # 负面关键词（包含这些说明论文不相关）
-        negative_keywords = {'traffic signal', 'manufacturing', 'battery', 'state of health',
-                           'forecasting', 'prediction', 'recommendation system',
-                           'social network', 'information retrieval', 'search engine'}
+        # 负面关键词：只保留与 CS 研究领域完全无关的噪音词
+        # 注意：prediction/forecasting 对 SE/AI 领域是相关词，不应列入
+        negative_keywords = {'traffic signal', 'manufacturing', 'battery', 'state of health'}
 
         # 检查负面关键词（扣分）
         for neg_kw in negative_keywords:

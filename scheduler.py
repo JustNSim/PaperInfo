@@ -289,14 +289,13 @@ def fetch_papers_for_domain(domain: Domain) -> dict:
             result['source_stats']['arxiv'] = arxiv_count
 
         # 2. 从 DBLP 抓取
+        # 提前初始化年份窗口（S2 也会用到）
+        current_year = get_beijing_time().year
+        from_year = current_year - Config.DBLP_YEAR_WINDOW + 1
+        to_year = current_year
+
         if domain.ccf_venues:
             logger.info(f"从 DBLP 抓取 {domain.name} 论文...")
-
-            # DBLP 论文批量入库（非每日更新），使用固定宽窗口而非增量时间
-            # 去重由数据库 UNIQUE 约束保证，不会重复入库
-            current_year = get_beijing_time().year
-            from_year = current_year - Config.DBLP_YEAR_WINDOW + 1
-            to_year = current_year
             logger.info(f"DBLP 年份窗口: {from_year}-{to_year} (最近 {Config.DBLP_YEAR_WINDOW} 年)")
 
             dblp_crawler = DBLPCrawler(
@@ -314,27 +313,29 @@ def fetch_papers_for_domain(domain: Domain) -> dict:
             result['new_count'] += dblp_count
             result['source_stats']['dblp'] = dblp_count
 
-        # 3. 从 Semantic Scholar 抓取
-        key_info = f" ({len(Config.S2_API_KEYS)} 个 API Key 轮换)" if Config.S2_API_KEYS else " (无 API Key)"
-        logger.info(f"从 Semantic Scholar 抓取 {domain.name} 论文...{key_info}")
-        s2_crawler = SemanticScholarCrawler(
-            delay=Config.S2_DELAY,
-            timeout=Config.REQUEST_TIMEOUT,
-            max_results=100,
-            api_keys=Config.S2_API_KEYS if Config.S2_API_KEYS else None
-        )
-        # 使用前 5 个关键词作为核心关键词
-        core_keywords = domain.keywords[:5] if domain.keywords else None
-        s2_papers = s2_crawler.search(
-            keywords=domain.keywords,
-            venues=domain.ccf_venues,
-            from_year=from_year,
-            to_year=to_year,
-            core_keywords=core_keywords
-        )
-        s2_count = _save_papers(s2_papers, domain)
-        result['new_count'] += s2_count
-        result['source_stats']['s2'] = s2_count
+        # 3. 从 Semantic Scholar 抓取（仅在配置了 API Key 时）
+        if not Config.S2_API_KEYS:
+            logger.info(f"跳过 Semantic Scholar 抓取（未配置 API Key，避免大量 429 限流）")
+            result['source_stats']['s2'] = 0
+        else:
+            logger.info(f"从 Semantic Scholar 抓取 {domain.name} 论文... ({len(Config.S2_API_KEYS)} 个 API Key 轮换)")
+            s2_crawler = SemanticScholarCrawler(
+                delay=Config.S2_DELAY,
+                timeout=Config.REQUEST_TIMEOUT,
+                max_results=100,
+                api_keys=Config.S2_API_KEYS
+            )
+            core_keywords = domain.keywords[:5] if domain.keywords else None
+            s2_papers = s2_crawler.search(
+                keywords=domain.keywords,
+                venues=domain.ccf_venues,
+                from_year=from_year,
+                to_year=to_year,
+                core_keywords=core_keywords
+            )
+            s2_count = _save_papers(s2_papers, domain)
+            result['new_count'] += s2_count
+            result['source_stats']['s2'] = s2_count
 
         logger.info(f"领域 {domain.name} 抓取完成，新增 {result['new_count']} 篇论文")
 
@@ -653,48 +654,56 @@ def _create_update_log(trigger_type: str, total_new: int = 0, source_stats: dict
 
 def scheduled_fetch_job():
     """定时抓取任务 - 由调度器调用"""
-    logger.info("=" * 50)
-    logger.info(f"开始执行定时抓取任务: {datetime.now()}")
-    logger.info("=" * 50)
+    global flask_app
 
-    global llm_filtered_count
-    llm_filtered_count = 0  # 重置 LLM 过滤计数器
+    if flask_app is None:
+        logger.error("Flask 应用实例未初始化，无法执行定时任务")
+        return
 
-    total_new = 0
-    all_source_stats = {'arxiv': 0, 'dblp': 0}
-    domain_results = []
-
-    try:
-        # 获取所有启用的领域
-        domains = Domain.query.filter_by(enabled=True).all()
-
-        if not domains:
-            logger.warning("没有启用的领域，跳过抓取")
-            return
-
-        logger.info(f"找到 {len(domains)} 个启用的领域")
-
-        for domain in domains:
-            result = fetch_papers_for_domain(domain)
-            total_new += result.get('new_count', 0)
-            # 合并来源统计
-            for source, count in result.get('source_stats', {}).items():
-                all_source_stats[source] = all_source_stats.get(source, 0) + count
-            domain_results.append(result)
-
+    with flask_app.app_context():
         logger.info("=" * 50)
-        logger.info(f"定时抓取任务完成，共新增 {total_new} 篇论文")
-        if Config.LLM_FILTER_ENABLED and llm_filtered_count > 0:
-            logger.info(f"LLM 过滤了 {llm_filtered_count} 篇不相关论文")
+        logger.info(f"开始执行定时抓取任务: {datetime.now()}")
         logger.info("=" * 50)
 
-        # 记录更新日志
-        _create_update_log('scheduled', total_new, all_source_stats, [d.id for d in domains], 'success', llm_filtered=llm_filtered_count)
+        global llm_filtered_count
+        llm_filtered_count = 0  # 重置 LLM 过滤计数器
 
-    except Exception as e:
-        logger.error(f"定时抓取任务出错: {e}")
-        # 记录失败日志
-        _create_update_log('scheduled', 0, {'arxiv': 0, 'dblp': 0}, [d.id for d in domains], 'failed', str(e), llm_filtered=0)
+        total_new = 0
+        all_source_stats = {'arxiv': 0, 'dblp': 0}
+        domain_results = []
+        domains = []  # 提前初始化，避免 except 块中 NameError
+
+        try:
+            # 获取所有启用的领域
+            domains = Domain.query.filter_by(enabled=True).all()
+
+            if not domains:
+                logger.warning("没有启用的领域，跳过抓取")
+                return
+
+            logger.info(f"找到 {len(domains)} 个启用的领域")
+
+            for domain in domains:
+                result = fetch_papers_for_domain(domain)
+                total_new += result.get('new_count', 0)
+                # 合并来源统计
+                for source, count in result.get('source_stats', {}).items():
+                    all_source_stats[source] = all_source_stats.get(source, 0) + count
+                domain_results.append(result)
+
+            logger.info("=" * 50)
+            logger.info(f"定时抓取任务完成，共新增 {total_new} 篇论文")
+            if Config.LLM_FILTER_ENABLED and llm_filtered_count > 0:
+                logger.info(f"LLM 过滤了 {llm_filtered_count} 篇不相关论文")
+            logger.info("=" * 50)
+
+            # 记录更新日志
+            _create_update_log('scheduled', total_new, all_source_stats, [d.id for d in domains], 'success', llm_filtered=llm_filtered_count)
+
+        except Exception as e:
+            logger.error(f"定时抓取任务出错: {e}")
+            # 记录失败日志
+            _create_update_log('scheduled', 0, {'arxiv': 0, 'dblp': 0}, [d.id for d in domains], 'failed', str(e), llm_filtered=0)
 
 
 def manual_trigger_fetch(domain_id: int = None) -> dict:
