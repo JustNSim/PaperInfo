@@ -14,6 +14,31 @@ python app.py
 # Access web interface at http://localhost:5000
 ```
 
+`FLASK_DEBUG` env var controls debug mode of `python app.py` (default on, reloader enabled). The background entry `run_server.py` ignores it and always runs with `debug=False`/`use_reloader=False`.
+
+## Running as a Background Service (Windows)
+
+Auto-start at logon via Task Scheduler (no third-party tools). Runs hidden (`pythonw.exe`), restarts on failure, works on battery; the built-in catch-up job (`check_and_catch_up`) backfills fetches missed while the machine was off.
+
+```powershell
+# Install/uninstall both require an elevated (Run as Administrator) PowerShell,
+# because registering scheduled tasks is denied from non-elevated sessions on this machine.
+
+# Install (registers 'PaperInfo' scheduled task and starts it immediately)
+powershell -ExecutionPolicy Bypass -File scripts\install_autostart.ps1
+
+# Uninstall (stops the background instance and removes the task)
+powershell -ExecutionPolicy Bypass -File scripts\uninstall_autostart.ps1
+
+# Restart (needed to pick up .env changes, e.g. a new LLM API key; no admin required)
+powershell -ExecutionPolicy Bypass -File scripts\restart_server.ps1
+
+# Check status
+Get-ScheduledTask PaperInfo
+```
+
+The task runs `venv\Scripts\pythonw.exe run_server.py` (GUI subsystem → no console window) with the project root as working directory, trigger AtLogOn, principal = current user (Interactive). `run_server.py` is the background entry point: it forces `debug=False`/`use_reloader=False` and redirects `sys.stdout`/`sys.stderr` to `logs/server.log` before importing `app` (required under `pythonw`, where they start as `None`). Settings: restart 3× at 1-minute intervals on failure, no execution time limit, run on battery, `IgnoreNew` for duplicate instances.
+
 ## Architecture Overview
 
 PaperInfo is a Flask-based paper research tool that automatically fetches academic papers from multiple sources (arXiv, DBLP) and displays them through a web interface.

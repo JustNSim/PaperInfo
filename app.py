@@ -304,7 +304,8 @@ def register_routes(app):
             keywords=data.get('keywords', []),
             arxiv_categories=data.get('arxiv_categories', []),
             ccf_venues=data.get('ccf_venues', []),
-            enabled=data.get('enabled', True)
+            enabled=data.get('enabled', True),
+            llm_prompt=data.get('llm_prompt')
         )
 
         try:
@@ -1115,4 +1116,6 @@ def register_routes(app):
 app = create_app()
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    # 后台常驻（任务计划/服务）时设 FLASK_DEBUG=0，避免 reloader 派生子进程导致进程管理混乱
+    debug = os.environ.get('FLASK_DEBUG', '1').lower() in ('1', 'true', 'yes')
+    app.run(host='0.0.0.0', port=5000, debug=debug, use_reloader=debug)
