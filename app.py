@@ -8,6 +8,7 @@ import queue
 import threading
 import logging
 from datetime import datetime, timedelta
+from urllib.parse import urlencode
 from flask import Flask, render_template, request, jsonify, Response, stream_with_context
 from sqlalchemy.exc import IntegrityError
 
@@ -46,7 +47,7 @@ def create_app(config_name='default'):
 
 
 def _init_default_domains():
-    """初始化默认领域，并同步已有领域的 venues/keywords/categories"""
+    """数据库为空时初始化默认领域；已有领域保留用户编辑的配置。"""
     existing_count = Domain.query.count()
 
     if existing_count == 0:
@@ -66,29 +67,6 @@ def _init_default_domains():
         except Exception as e:
             db.session.rollback()
             print(f"初始化默认领域时出错: {e}")
-    else:
-        # 同步已有领域的 ccf_venues/keywords/arxiv_categories（修复旧数据中的全名 venue）
-        updated = 0
-        for domain_config in Config.DEFAULT_DOMAINS:
-            domain = Domain.query.filter_by(name=domain_config['name']).first()
-            if domain:
-                new_venues = domain_config.get('ccf_venues', [])
-                new_keywords = domain_config.get('keywords', [])
-                new_categories = domain_config.get('arxiv_categories', [])
-                if (domain.ccf_venues != new_venues or
-                        domain.keywords != new_keywords or
-                        domain.arxiv_categories != new_categories):
-                    domain.ccf_venues = new_venues
-                    domain.keywords = new_keywords
-                    domain.arxiv_categories = new_categories
-                    updated += 1
-        if updated > 0:
-            try:
-                db.session.commit()
-                print(f"已同步 {updated} 个领域的配置（venues/keywords/categories）")
-            except Exception as e:
-                db.session.rollback()
-                print(f"同步领域配置时出错: {e}")
 
 
 def register_routes(app):
@@ -109,6 +87,7 @@ def register_routes(app):
         keyword = request.args.get('q', '').strip()
         sources = request.args.getlist('source')  # 支持多个source参数
         year = request.args.get('year', type=int)
+        days = request.args.get('days', type=int)
         sort = request.args.get('sort', 'date')  # date, title, score_desc, score_asc
         update_log_id = request.args.get('update_log', type=int)  # 按更新事件筛选
 
@@ -138,6 +117,13 @@ def register_routes(app):
         # 年份过滤
         if year:
             query = query.filter_by(year=year)
+
+        # 最近 N 天过滤（按论文发布日期）
+        if days and days > 0:
+            days = min(days, 3650)
+            query = query.filter(
+                Paper.published_date >= datetime.now() - timedelta(days=days)
+            )
 
         # 关键词搜索
         if keyword:
@@ -193,8 +179,12 @@ def register_routes(app):
         years = [y[0] for y in years]
 
         # 构建查询字符串（用于分页链接）
-        query_params = {k: v for k, v in request.args.items() if k != 'page'}
-        query_string = '&' + '&'.join(f'{k}={v}' for k, v in query_params.items()) if query_params else ''
+        query_params = [
+            (key, value)
+            for key, values in request.args.lists() if key != 'page'
+            for value in values
+        ]
+        query_string = '&' + urlencode(query_params) if query_params else ''
 
         # 获取当前领域名称
         domain_name = None
@@ -227,6 +217,7 @@ def register_routes(app):
                              domain_name=domain_name,
                              years=years,
                              year=year,
+                             days=days,
                              sources=sources,
                              sort=sort,
                              page=page,
@@ -250,6 +241,7 @@ def register_routes(app):
         domain_id = request.args.get('domain', type=int)
         sort_by = request.args.get('sort', 'date')  # date, score_asc, score_desc
         sources = request.args.getlist('source')  # arxiv, dblp, s2
+        days = request.args.get('days', type=int)
 
         query = Paper.query
         if domain_id:
@@ -258,6 +250,11 @@ def register_routes(app):
         # 数据源过滤
         if sources:
             query = query.filter(Paper.source.in_(sources))
+
+        if days and days > 0:
+            query = query.filter(
+                Paper.published_date >= datetime.now() - timedelta(days=min(days, 3650))
+            )
 
         # 排序
         if sort_by == 'score_desc':
@@ -353,10 +350,14 @@ def register_routes(app):
             db.session.rollback()
             return jsonify({'success': False, 'message': str(e)}), 500
 
-    @app.route('/api/domains/<int:domain_id>', methods=['PUT', 'PATCH'])
+    @app.route('/api/domains/<int:domain_id>', methods=['GET', 'PUT', 'PATCH'])
     def api_update_domain(domain_id):
-        """API: 更新领域"""
+        """API: 获取或更新单个领域"""
         domain = Domain.query.get_or_404(domain_id)
+
+        if request.method == 'GET':
+            return jsonify({'success': True, 'domain': domain.to_dict()})
+
         data = request.get_json() or {}
 
         try:

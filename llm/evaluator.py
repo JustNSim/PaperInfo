@@ -5,6 +5,7 @@ Supports OpenAI, Anthropic, and Zhipu AI (GLM) APIs
 import logging
 import time
 import os
+import threading
 from abc import ABC, abstractmethod
 from typing import Optional, Dict, Any
 from dataclasses import dataclass
@@ -277,10 +278,16 @@ class CustomOpenAIProvider(BaseLLMProvider):
     - Model name
     """
 
-    def __init__(self, api_key: str, base_url: str, model: str = "gpt-4o-mini", delay: float = 1.0):
+    def __init__(self, api_key: str, base_url: str, model: str = "gpt-4o-mini",
+                 delay: float = 1.0, provider_name: Optional[str] = None,
+                 timeout: float = 30.0,
+                 extra_body: Optional[Dict[str, Any]] = None):
         super().__init__(api_key, delay)
         self.base_url = base_url.rstrip('/')
         self.model = model
+        self.provider_name = provider_name or f"custom ({self.base_url})"
+        self.timeout = timeout
+        self.extra_body = extra_body
         self._client = None
 
     def _get_client(self):
@@ -290,7 +297,8 @@ class CustomOpenAIProvider(BaseLLMProvider):
                 import openai
                 self._client = openai.OpenAI(
                     api_key=self.api_key,
-                    base_url=self.base_url
+                    base_url=self.base_url,
+                    timeout=self.timeout
                 )
             except ImportError:
                 raise LLMEvaluatorError("OpenAI package not installed. Install with: pip install openai")
@@ -306,7 +314,7 @@ class CustomOpenAIProvider(BaseLLMProvider):
 
         try:
             client = self._get_client()
-            response = client.chat.completions.create(
+            request_options = dict(
                 model=self.model,
                 messages=[
                     {"role": "system", "content": system_prompt},
@@ -315,25 +323,84 @@ class CustomOpenAIProvider(BaseLLMProvider):
                 temperature=0,
                 max_tokens=50
             )
+            if self.extra_body:
+                request_options['extra_body'] = self.extra_body
+            response = client.chat.completions.create(**request_options)
 
-            content = response.choices[0].message.content.strip()
+            content = (response.choices[0].message.content or '').strip()
+            if not content:
+                raise LLMEvaluatorError(f"{self.provider_name} returned empty response content")
+
+            import re
+            if not re.search(r'\d{1,3}', content):
+                raise LLMEvaluatorError(f"{self.provider_name} response did not contain a score")
             relevance_score, value_score = self._parse_dual_scores(content)
 
             return EvalResult(
                 relevance_score=relevance_score,
                 value_score=value_score,
                 model=self.model,
-                provider=f"custom ({self.base_url})",
+                provider=self.provider_name,
                 raw_response=content
             )
 
         except ImportError as e:
             raise LLMEvaluatorError(f"OpenAI import failed: {e}")
+        except LLMEvaluatorError:
+            raise
         except Exception as e:
             error_msg = str(e)
             if "rate_limit" in error_msg.lower() or "429" in error_msg:
                 raise RateLimitError(f"Custom API rate limit exceeded: {e}")
             raise LLMEvaluatorError(f"Custom API error: {e}")
+
+
+class FailoverLLMProvider:
+    """主服务异常时切换到备用服务，并短暂熔断主服务。"""
+
+    def __init__(self, primary: BaseLLMProvider, fallback: BaseLLMProvider,
+                 cooldown_seconds: int = 300):
+        self.primary = primary
+        self.fallback = fallback
+        self.cooldown_seconds = max(0, cooldown_seconds)
+        self._primary_disabled_until = 0.0
+        self._state_lock = threading.Lock()
+
+    @property
+    def model(self):
+        return self.primary.model
+
+    def _primary_is_disabled(self) -> bool:
+        with self._state_lock:
+            return time.monotonic() < self._primary_disabled_until
+
+    def _disable_primary_temporarily(self):
+        with self._state_lock:
+            self._primary_disabled_until = time.monotonic() + self.cooldown_seconds
+
+    def evaluate(self, title: str, abstract: str, system_prompt: str) -> EvalResult:
+        if self._primary_is_disabled():
+            return self.fallback.evaluate(title, abstract, system_prompt)
+
+        try:
+            return self.primary.evaluate(title, abstract, system_prompt)
+        except (RateLimitError, LLMEvaluatorError) as primary_error:
+            self._disable_primary_temporarily()
+            logger.warning(
+                "Primary LLM provider %s failed; switching to fallback %s for %ss: %s",
+                getattr(self.primary, 'provider_name', 'primary'),
+                getattr(self.fallback, 'provider_name', 'fallback'),
+                self.cooldown_seconds,
+                primary_error,
+            )
+
+            try:
+                return self.fallback.evaluate(title, abstract, system_prompt)
+            except (RateLimitError, LLMEvaluatorError) as fallback_error:
+                raise LLMEvaluatorError(
+                    f"Primary and fallback LLM providers both failed; "
+                    f"fallback error: {fallback_error}"
+                ) from fallback_error
 
 
 class LLMEvaluator:
@@ -375,7 +442,16 @@ class LLMEvaluator:
         model: Optional[str] = None,
         delay: float = 1.0,
         system_prompt: Optional[str] = None,
-        enabled: bool = True
+        enabled: bool = True,
+        base_url: Optional[str] = None,
+        provider_label: Optional[str] = None,
+        fallback_api_key: Optional[str] = None,
+        fallback_base_url: Optional[str] = None,
+        fallback_model: Optional[str] = None,
+        fallback_label: str = "DeepSeek",
+        fallback_extra_body: Optional[Dict[str, Any]] = None,
+        failure_cooldown: int = 300,
+        timeout: float = 30.0,
     ):
         """
         Initialize LLM Evaluator
@@ -437,7 +513,7 @@ class LLMEvaluator:
 
         # Initialize provider (custom provider needs additional parameters)
         if provider.lower() == 'custom':
-            base_url = os.environ.get('CUSTOM_LLM_BASE_URL', '')
+            base_url = base_url or os.environ.get('CUSTOM_LLM_BASE_URL', '')
             if not base_url:
                 raise LLMEvaluatorError(
                     "CUSTOM_LLM_BASE_URL environment variable not set for custom provider"
@@ -445,20 +521,50 @@ class LLMEvaluator:
             # For custom provider, use CUSTOM_LLM_MODEL env var if model is not specified
             if model is None:
                 model = os.environ.get('CUSTOM_LLM_MODEL', default_models.get('custom'))
-            self._provider = CustomOpenAIProvider(
+            primary_provider = CustomOpenAIProvider(
                 api_key=api_key,
                 base_url=base_url,
                 model=model,
-                delay=delay
+                delay=delay,
+                provider_name=provider_label,
+                timeout=timeout,
             )
+
+            fallback_values = (fallback_api_key, fallback_base_url, fallback_model)
+            if any(fallback_values) and not all(fallback_values):
+                raise LLMEvaluatorError(
+                    "Fallback LLM configuration is incomplete; API key, base URL and model are all required"
+                )
+
+            if all(fallback_values):
+                fallback_provider = CustomOpenAIProvider(
+                    api_key=fallback_api_key,
+                    base_url=fallback_base_url,
+                    model=fallback_model,
+                    delay=delay,
+                    provider_name=fallback_label,
+                    timeout=timeout,
+                    extra_body=fallback_extra_body,
+                )
+                self._provider = FailoverLLMProvider(
+                    primary=primary_provider,
+                    fallback=fallback_provider,
+                    cooldown_seconds=failure_cooldown,
+                )
+                self.provider_name = f"{provider_label or 'custom'}->{fallback_label}"
+            else:
+                self._provider = primary_provider
+                self.provider_name = provider.lower()
         else:
             # For standard providers, use default models if model is not specified
             if model is None:
                 model = default_models.get(provider.lower())
             self._provider = provider_class(api_key=api_key, model=model, delay=delay)
 
-        self.provider_name = provider.lower()
-        logger.info(f"LLM Evaluator initialized with provider={provider}, model={model}")
+            self.provider_name = provider.lower()
+
+        fallback_log = f", fallback_model={fallback_model}" if fallback_model else ""
+        logger.info(f"LLM Evaluator initialized with provider={self.provider_name}, model={model}{fallback_log}")
 
     def evaluate(self, title: str, abstract: str) -> EvalResult:
         """

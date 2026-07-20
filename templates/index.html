@@ -130,8 +130,11 @@
                     <i class="bi bi-bar-chart"></i> 查看统计
                 </button>
                 <hr>
-                <button class="btn btn-success w-100 mb-2" onclick="triggerFetch()" id="fetchBtn">
+                <button class="btn btn-success w-100 mb-2" onclick="triggerFetch(false)" id="fetchBtn">
                     <i class="bi bi-cloud-download"></i> 立即更新
+                </button>
+                <button class="btn btn-outline-success w-100 mb-2" onclick="triggerFetch(true)" id="fetchAllBtn">
+                    <i class="bi bi-cloud-download-fill"></i> 更新全部领域
                 </button>
                 <hr>
                 <button class="btn btn-danger w-100" onclick="confirmClearData()" id="clearBtn">
@@ -166,6 +169,12 @@
                     {% endif %}
                 </span>
                 <div class="btn-group btn-group-sm">
+                    <button class="btn btn-outline-primary" type="button"
+                            data-bs-toggle="collapse" data-bs-target="#paperQuickFilters"
+                            aria-expanded="{% if days or domain_id or sources %}true{% else %}false{% endif %}"
+                            aria-controls="paperQuickFilters" title="按时间、领域、来源筛选">
+                        <i class="bi bi-funnel"></i> 筛选
+                    </button>
                     <a href="?{% if request.args %}{% for k, v in request.args.items() %}{% if k != 'sort' %}{{ k }}={{ v }}&{% endif %}{% endfor %}{% endif %}sort=date" class="btn btn-outline-secondary">
                         <i class="bi bi-calendar3"></i> 日期
                     </a>
@@ -187,6 +196,46 @@
                     <button class="btn btn-outline-primary" onclick="exportToCSV()" title="导出为 CSV 格式">
                         <i class="bi bi-filetype-csv"></i> CSV
                     </button>
+                </div>
+            </div>
+            <div class="collapse {% if days or domain_id or sources %}show{% endif %}" id="paperQuickFilters">
+                <div class="paper-quick-filter-panel border-top pt-3 mt-2">
+                    <div class="row g-2 align-items-end">
+                        <div class="col-md-3">
+                            <label for="quickTimeFilter" class="form-label small fw-bold mb-1">时间</label>
+                            <select class="form-select form-select-sm" id="quickTimeFilter">
+                                <option value="">全部时间</option>
+                                <option value="7" {% if days == 7 %}selected{% endif %}>最近 7 天</option>
+                                <option value="30" {% if days == 30 %}selected{% endif %}>最近 30 天</option>
+                                <option value="90" {% if days == 90 %}selected{% endif %}>最近 90 天</option>
+                                <option value="365" {% if days == 365 %}selected{% endif %}>最近一年</option>
+                            </select>
+                        </div>
+                        <div class="col-md-3">
+                            <label for="quickDomainFilter" class="form-label small fw-bold mb-1">领域</label>
+                            <select class="form-select form-select-sm" id="quickDomainFilter">
+                                <option value="">全部领域</option>
+                                {% for domain in domains %}
+                                <option value="{{ domain.id }}" {% if domain_id == domain.id %}selected{% endif %}>{{ domain.name }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="col-md-3">
+                            <label for="quickSourceFilter" class="form-label small fw-bold mb-1">来源</label>
+                            <select class="form-select form-select-sm" id="quickSourceFilter">
+                                <option value="">全部来源</option>
+                                <option value="arxiv" {% if sources|length == 1 and 'arxiv' in sources %}selected{% endif %}>arXiv</option>
+                                <option value="dblp" {% if sources|length == 1 and 'dblp' in sources %}selected{% endif %}>DBLP</option>
+                                <option value="s2" {% if sources|length == 1 and 's2' in sources %}selected{% endif %}>Semantic Scholar</option>
+                            </select>
+                        </div>
+                        <div class="col-md-3 d-flex gap-2">
+                            <button class="btn btn-sm btn-primary flex-grow-1" onclick="applyPaperQuickFilters()">
+                                <i class="bi bi-check-circle"></i> 应用
+                            </button>
+                            <button class="btn btn-sm btn-outline-secondary" onclick="resetPaperQuickFilters()">重置</button>
+                        </div>
+                    </div>
                 </div>
             </div>
             <!-- 批量操作栏 -->
@@ -249,8 +298,9 @@
 
                     <!-- 标题和来源 -->
                     <h5 class="card-title d-flex align-items-start gap-2">
-                        <a href="{{ paper.url }}" target="_blank" class="text-decoration-none flex-grow-1" id="title-{{ paper.id }}">{{ paper.title }}</a>
-                        <button class="btn btn-sm btn-link p-0 text-primary" onclick="translateTitle({{ paper.id }})" title="翻译标题">
+                        <a href="{{ paper.url }}" target="_blank" class="text-decoration-none flex-grow-1 paper-title-link"
+                           id="title-{{ paper.id }}" onclick="markPaperRead({{ paper.id }})">{{ paper.title }}</a>
+                        <button class="btn btn-sm btn-link p-0 text-primary" onclick="markPaperRead({{ paper.id }}); translateTitle({{ paper.id }})" title="翻译标题">
                             <i class="bi bi-translate"></i>
                         </button>
                     </h5>
@@ -300,12 +350,12 @@
                                 <small>{{ paper.abstract[:300] }}{% if paper.abstract|length > 300 %}...{% endif %}</small>
                             </p>
                         </div>
-                        <button class="btn btn-sm btn-link p-0 text-primary flex-shrink-0" onclick="translateAbstract({{ paper.id }})" title="翻译摘要">
+                        <button class="btn btn-sm btn-link p-0 text-primary flex-shrink-0" onclick="markPaperRead({{ paper.id }}); translateAbstract({{ paper.id }})" title="翻译摘要">
                             <i class="bi bi-translate"></i>
                         </button>
                     </div>
                     {% if paper.abstract|length > 300 %}
-                    <button class="btn btn-sm btn-link p-0" onclick="toggleAbstract({{ paper.id }})">
+                    <button class="btn btn-sm btn-link p-0" onclick="markPaperRead({{ paper.id }}); toggleAbstract({{ paper.id }})">
                         <span id="abstract-toggle-{{ paper.id }}">展开全文</span>
                     </button>
                     {% endif %}
@@ -314,16 +364,16 @@
                     <!-- 操作按钮 -->
                     <div class="mt-2">
                         {% if paper.url %}
-                        <a href="{{ paper.url }}" target="_blank" class="btn btn-sm btn-outline-primary">
+                        <a href="{{ paper.url }}" target="_blank" class="btn btn-sm btn-outline-primary" onclick="markPaperRead({{ paper.id }})">
                             <i class="bi bi-link-45deg"></i> 原文链接
                         </a>
                         {% endif %}
                         {% if paper.pdf_url %}
-                        <a href="{{ paper.pdf_url }}" target="_blank" class="btn btn-sm btn-outline-danger">
+                        <a href="{{ paper.pdf_url }}" target="_blank" class="btn btn-sm btn-outline-danger" onclick="markPaperRead({{ paper.id }})">
                             <i class="bi bi-file-pdf"></i> PDF
                         </a>
                         {% endif %}
-                        <button class="btn btn-sm btn-outline-info" onclick="translatePaper({{ paper.id }})" id="translate-btn-{{ paper.id }}">
+                        <button class="btn btn-sm btn-outline-info" onclick="markPaperRead({{ paper.id }}); translatePaper({{ paper.id }})" id="translate-btn-{{ paper.id }}">
                             <i class="bi bi-translate"></i> 翻译
                         </button>
                         <small class="text-muted ms-3">
@@ -393,6 +443,31 @@ const originalTitles = {
     {{ paper.id }}: {{ paper.title | tojson }},
     {% endfor %}
 };
+
+function applyPaperQuickFilters() {
+    const params = new URLSearchParams(window.location.search);
+    params.delete('page');
+    params.delete('year');
+    params.delete('update_log');
+    params.delete('days');
+    params.delete('domain');
+    params.delete('source');
+
+    const days = document.getElementById('quickTimeFilter').value;
+    const domain = document.getElementById('quickDomainFilter').value;
+    const source = document.getElementById('quickSourceFilter').value;
+    if (days) params.set('days', days);
+    if (domain) params.set('domain', domain);
+    if (source) params.append('source', source);
+
+    window.location.href = `/?${params.toString()}`;
+}
+
+function resetPaperQuickFilters() {
+    const params = new URLSearchParams(window.location.search);
+    ['page', 'days', 'domain', 'source', 'year', 'update_log'].forEach(key => params.delete(key));
+    window.location.href = `/?${params.toString()}`;
+}
 
 function toggleAbstract(paperId) {
     const abstractEl = document.getElementById(`abstract-${paperId}`);
@@ -480,15 +555,31 @@ function toggleDomainEnabled(domainId, enabled) {
     });
 }
 
-function triggerFetch() {
+function triggerFetch(updateAll = false) {
     const btn = document.getElementById('fetchBtn');
+    const allBtn = document.getElementById('fetchAllBtn');
+    const domainSelect = document.getElementById('domainFilter');
+    const domainId = domainSelect.value;
+
+    if (!updateAll && !domainId) {
+        alert('请先选择一个具体领域，或点击“更新全部领域”。');
+        return;
+    }
+
+    if (updateAll && !confirm('确认更新全部已启用领域吗？此操作可能需要较长时间。')) {
+        return;
+    }
+
     btn.disabled = true;
-    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> 更新中...';
+    allBtn.disabled = true;
+    const activeBtn = updateAll ? allBtn : btn;
+    const originalHtml = activeBtn.innerHTML;
+    activeBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> 更新中...';
 
     fetch('/api/trigger', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({})
+        body: JSON.stringify(updateAll ? {} : {domain_id: Number(domainId)})
     })
     .then(res => res.json())
     .then(data => {
@@ -504,7 +595,8 @@ function triggerFetch() {
     })
     .finally(() => {
         btn.disabled = false;
-        btn.innerHTML = '<i class="bi bi-cloud-download"></i> 立即更新';
+        allBtn.disabled = false;
+        activeBtn.innerHTML = originalHtml;
     });
 }
 
@@ -1463,6 +1555,21 @@ async function confirmDeleteDomain(domainId, domainName, deletePapers) {
 }
 
 // 更新编辑按钮状态
+function updateEditDomainButton() {
+    const select = document.getElementById('domainFilter');
+    const button = document.getElementById('editDomainBtn');
+    if (!select || !button) return;
+
+    if (select.value) {
+        const domainName = select.options[select.selectedIndex]?.text.trim() || '当前领域';
+        button.innerHTML = '<i class="bi bi-gear"></i> 编辑';
+        button.title = `编辑领域配置：${domainName}`;
+    } else {
+        button.innerHTML = '<i class="bi bi-list"></i> 管理';
+        button.title = '管理所有领域';
+    }
+}
+
 function editSelectedDomain() {
     const select = document.getElementById('domainFilter');
     const domainId = select.value;
@@ -1534,88 +1641,123 @@ function showAllDomainsList() {
 }
 
 // 编辑单个领域
-function editSingleDomain(domainId) {
-    const select = document.getElementById('domainFilter');
-    const selectedOption = select.querySelector(`option[value="${domainId}"]`);
+async function editSingleDomain(domainId) {
+    try {
+        const response = await fetch(`/api/domains/${domainId}`);
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+            throw new Error(data.message || '获取领域配置失败');
+        }
 
-    const domainName = selectedOption.getAttribute('data-name');
-    const currentPrompt = selectedOption.getAttribute('data-prompt') || '';
+        const domain = data.domain;
 
-    // 显示预设prompt选项
-    const presetPrompts = {
-        'smart_contract_repair': '智能合约修复专用 - 针对区块链安全、智能合约漏洞修复、多智能体系统等方向',
-        'llm_automation': '大模型自动化 - 针对多智能体系统、自动程序修复、LLM代码生成等方向',
-        'general_cs': '通用计算机科学 - 评估论文的学术价值、创新性、方法严谨性等'
-    };
+        // 显示预设prompt选项
+        const presetPrompts = {
+            'smart_contract_repair': '智能合约修复专用 - 针对区块链安全、智能合约漏洞修复、多智能体系统等方向',
+            'llm_automation': '大模型自动化 - 针对多智能体系统、自动程序修复、LLM代码生成等方向',
+            'general_cs': '通用计算机科学 - 评估论文的学术价值、创新性、方法严谨性等'
+        };
 
-    let presetHtml = '<div class="mb-2"><label class="form-label text-muted small">预设模板（点击使用）:</label><div class="d-flex flex-wrap gap-2">';
-    for (const [key, label] of Object.entries(presetPrompts)) {
-        presetHtml += `<button type="button" class="btn btn-sm btn-outline-secondary" onclick="loadPresetPrompt('${key}')">${label}</button>`;
-    }
-    presetHtml += '</div></div>';
+        let presetHtml = '<div class="mb-2"><label class="form-label text-muted small">预设模板（点击使用）:</label><div class="d-flex flex-wrap gap-2">';
+        for (const [key, label] of Object.entries(presetPrompts)) {
+            presetHtml += `<button type="button" class="btn btn-sm btn-outline-secondary" onclick="loadPresetPrompt('${key}')">${label}</button>`;
+        }
+        presetHtml += '</div></div>';
 
-    // 更新模态框内容为单个领域编辑视图
-    document.getElementById('editDomainModalContent').innerHTML = `
-        <div class="modal-header">
-            <h5 class="modal-title">
-                <i class="bi bi-gear"></i> 编辑领域配置
-            </h5>
-            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-        </div>
-        <div class="modal-body">
-            <input type="hidden" id="editDomainId" value="${domainId}">
-            <input type="hidden" id="editDomainNameOriginal" value="${domainName}">
-
-            <div class="mb-3">
-                <label for="editDomainNameInput" class="form-label">
-                    <i class="bi bi-tag"></i> 领域名称
-                </label>
-                <input type="text" class="form-control" id="editDomainNameInput" value="${domainName}" placeholder="输入领域名称">
+        document.getElementById('editDomainModalContent').innerHTML = `
+            <div class="modal-header">
+                <h5 class="modal-title">
+                    <i class="bi bi-gear"></i> 编辑领域配置
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
             </div>
+            <div class="modal-body">
+                <input type="hidden" id="editDomainId">
+                <input type="hidden" id="editDomainNameOriginal">
 
-            <div id="presetPromptOptions">${presetHtml}</div>
+                <div class="mb-3">
+                    <label for="editDomainNameInput" class="form-label">
+                        <i class="bi bi-tag"></i> 领域名称 <span class="text-danger">*</span>
+                    </label>
+                    <input type="text" class="form-control" id="editDomainNameInput" placeholder="输入领域名称">
+                </div>
 
-            <div class="mb-3">
-                <label for="editDomainPrompt" class="form-label">
-                    <i class="bi bi-chat-text"></i> LLM评估Prompt
-                </label>
-                <textarea class="form-control font-monospace" id="editDomainPrompt" rows="8"
-                    placeholder="留空使用全局默认prompt...">${currentPrompt}</textarea>
-                <div class="form-text">
-                    <i class="bi bi-info-circle"></i>
-                    此prompt用于评估该领域论文的相关度。留空则使用全局默认prompt。
+                <div class="mb-3">
+                    <label for="editDomainKeywords" class="form-label">
+                        <i class="bi bi-keywords"></i> 关键词
+                    </label>
+                    <textarea class="form-control" id="editDomainKeywords" rows="4"
+                        placeholder="每行一个关键词，或用逗号分隔"></textarea>
+                    <div class="form-text">关键词顺序会影响各数据源的核心检索优先级。</div>
+                </div>
+
+                <div class="mb-3">
+                    <label for="editDomainArxivCategories" class="form-label">
+                        <i class="bi bi-book"></i> arXiv分类
+                    </label>
+                    <input type="text" class="form-control" id="editDomainArxivCategories"
+                        placeholder="如：cs.AI, cs.CL, cs.LG">
+                </div>
+
+                <div class="mb-3">
+                    <label for="editDomainVenues" class="form-label">
+                        <i class="bi bi-building"></i> 会议/期刊 Venue
+                    </label>
+                    <textarea class="form-control" id="editDomainVenues" rows="4"
+                        placeholder="每行一个 venue，或用逗号分隔"></textarea>
+                    <div class="form-text">建议使用 DBLP 可识别的简称，避免同时填写全称和别名。</div>
+                </div>
+
+                <div id="presetPromptOptions">${presetHtml}</div>
+
+                <div class="mb-3">
+                    <label for="editDomainPrompt" class="form-label">
+                        <i class="bi bi-chat-text"></i> LLM评估Prompt
+                    </label>
+                    <textarea class="form-control font-monospace" id="editDomainPrompt" rows="8"
+                        placeholder="留空使用全局默认prompt..."></textarea>
+                    <div class="form-text">
+                        <i class="bi bi-info-circle"></i>
+                        此prompt用于评估该领域论文的相关度。留空则使用全局默认prompt。
+                    </div>
                 </div>
             </div>
-
-            <div class="alert alert-info small">
-                <strong><i class="bi bi-lightbulb"></i> 提示：</strong>
-                <ul class="mb-0 mt-2">
-                    <li>描述该领域的研究方向和关注点</li>
-                    <li>指定评估论文相关度时需要考虑的因素</li>
-                    <li>要求LLM返回0-100的整数评分</li>
-                </ul>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-danger me-auto" onclick="deleteEditedDomain()">
+                    <i class="bi bi-trash3"></i> 删除领域
+                </button>
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-primary" onclick="saveDomainConfig()" id="savePromptBtn">
+                    <i class="bi bi-check-circle"></i> 保存
+                </button>
+                <button type="button" class="btn btn-success" onclick="saveAndRescoreDomain()" id="saveAndRescoreBtn">
+                    <i class="bi bi-arrow-clockwise"></i> 保存并重新评分
+                </button>
             </div>
-        </div>
-        <div class="modal-footer">
-            <button type="button" class="btn btn-outline-danger me-auto" onclick='deleteDomain("${domainId}", "${domainName}")'>
-                <i class="bi bi-trash3"></i> 删除领域
-            </button>
-            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
-            <button type="button" class="btn btn-primary" onclick="saveDomainConfig()" id="savePromptBtn">
-                <i class="bi bi-check-circle"></i> 保存
-            </button>
-            <button type="button" class="btn btn-success" onclick="saveAndRescoreDomain()" id="saveAndRescoreBtn">
-                <i class="bi bi-arrow-clockwise"></i> 保存并重新评分
-            </button>
-        </div>
-    `;
+        `;
 
-    // 如果模态框还没打开，则打开它
-    let modal = bootstrap.Modal.getInstance(document.getElementById('editDomainModal'));
-    if (!modal) {
-        modal = new bootstrap.Modal(document.getElementById('editDomainModal'));
+        document.getElementById('editDomainId').value = domain.id;
+        document.getElementById('editDomainNameOriginal').value = domain.name;
+        document.getElementById('editDomainNameInput').value = domain.name;
+        document.getElementById('editDomainKeywords').value = (domain.keywords || []).join('\n');
+        document.getElementById('editDomainArxivCategories').value = (domain.arxiv_categories || []).join(', ');
+        document.getElementById('editDomainVenues').value = (domain.ccf_venues || []).join('\n');
+        document.getElementById('editDomainPrompt').value = domain.llm_prompt || '';
+
+        let modal = bootstrap.Modal.getInstance(document.getElementById('editDomainModal'));
+        if (!modal) {
+            modal = new bootstrap.Modal(document.getElementById('editDomainModal'));
+        }
+        modal.show();
+    } catch (err) {
+        showToast('加载失败: ' + err.message, 'error');
     }
-    modal.show();
+}
+
+function deleteEditedDomain() {
+    const domainId = document.getElementById('editDomainId').value;
+    const domainName = document.getElementById('editDomainNameOriginal').value;
+    deleteDomain(domainId, domainName);
 }
 
 // 加载预设prompt
@@ -1640,14 +1782,28 @@ Return your response in the format: "Relevance: XX, Value: YY". Return ONLY the 
     document.getElementById('editDomainPrompt').value = presetPrompts[presetKey];
 }
 
+function collectEditedDomainData() {
+    const splitValues = value => value
+        .split(/[,\n]+/)
+        .map(item => item.trim())
+        .filter(Boolean);
+
+    return {
+        name: document.getElementById('editDomainNameInput').value.trim(),
+        keywords: splitValues(document.getElementById('editDomainKeywords').value),
+        arxiv_categories: splitValues(document.getElementById('editDomainArxivCategories').value),
+        ccf_venues: splitValues(document.getElementById('editDomainVenues').value),
+        llm_prompt: document.getElementById('editDomainPrompt').value.trim() || null
+    };
+}
+
 // 保存领域配置
 async function saveDomainConfig() {
     const domainId = document.getElementById('editDomainId').value;
-    const domainName = document.getElementById('editDomainNameInput').value.trim();
-    const prompt = document.getElementById('editDomainPrompt').value.trim();
+    const updateData = collectEditedDomainData();
     const saveBtn = document.getElementById('savePromptBtn');
 
-    if (!domainName) {
+    if (!updateData.name) {
         showToast('领域名称不能为空', 'warning');
         return;
     }
@@ -1656,11 +1812,6 @@ async function saveDomainConfig() {
     saveBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> 保存中...';
 
     try {
-        const updateData = {
-            name: domainName,
-            llm_prompt: prompt || null
-        };
-
         const response = await fetch(`/api/domains/${domainId}`, {
             method: 'PATCH',
             headers: {'Content-Type': 'application/json'},
@@ -1690,12 +1841,11 @@ async function saveDomainConfig() {
 // 保存并重新评分
 async function saveAndRescoreDomain() {
     const domainId = document.getElementById('editDomainId').value;
-    const domainName = document.getElementById('editDomainNameInput').value.trim();
-    const prompt = document.getElementById('editDomainPrompt').value.trim();
+    const updateData = collectEditedDomainData();
     const saveBtn = document.getElementById('savePromptBtn');
     const rescoreBtn = document.getElementById('saveAndRescoreBtn');
 
-    if (!domainName) {
+    if (!updateData.name) {
         showToast('领域名称不能为空', 'warning');
         return;
     }
@@ -1717,11 +1867,6 @@ async function saveAndRescoreDomain() {
 
     try {
         // 1. 保存配置
-        const updateData = {
-            name: domainName,
-            llm_prompt: prompt || null
-        };
-
         const saveResponse = await fetch(`/api/domains/${domainId}`, {
             method: 'PATCH',
             headers: {'Content-Type': 'application/json'},

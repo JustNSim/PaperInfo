@@ -8,6 +8,39 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
+def _get_system_environment(name, default=None):
+    """读取进程环境变量；Windows 下兼容读取用户/系统环境变量注册表。
+
+    Windows 任务计划程序可能继续使用创建时的旧环境块，因此用户刚添加的
+    环境变量不一定立即出现在 ``os.environ`` 中。这里只读取配置，不修改环境。
+    """
+    value = os.environ.get(name)
+    if value:
+        return value
+
+    if os.name == 'nt':
+        try:
+            import winreg
+
+            locations = (
+                (winreg.HKEY_CURRENT_USER, r'Environment'),
+                (winreg.HKEY_LOCAL_MACHINE,
+                 r'SYSTEM\CurrentControlSet\Control\Session Manager\Environment'),
+            )
+            for root, path in locations:
+                try:
+                    with winreg.OpenKey(root, path) as key:
+                        registry_value, _ = winreg.QueryValueEx(key, name)
+                    if registry_value:
+                        return os.path.expandvars(str(registry_value))
+                except (FileNotFoundError, OSError):
+                    continue
+        except ImportError:
+            pass
+
+    return default
+
+
 class Config:
     """应用配置类"""
 
@@ -62,10 +95,20 @@ class Config:
     LLM_MAX_WORKERS = int(os.environ.get('LLM_MAX_WORKERS', '5'))  # 最大并发线程数
     LLM_EVALUATION_TIMEOUT = int(os.environ.get('LLM_EVALUATION_TIMEOUT', '30'))  # 单次评估超时（秒）
 
-    # 自定义 LLM API 配置 (用于第三方 OpenAI 兼容 API)
-    CUSTOM_LLM_API_KEY = os.environ.get('CUSTOM_LLM_API_KEY')  # 自定义 API 密钥
-    CUSTOM_LLM_BASE_URL = os.environ.get('CUSTOM_LLM_BASE_URL')  # 自定义 API 基础 URL
-    CUSTOM_LLM_MODEL = os.environ.get('CUSTOM_LLM_MODEL')  # 自定义模型名称
+    # 双 LLM 配置：GLM 为主，DeepSeek 为自动降级备用。
+    # Key 只从操作系统环境变量读取；URL 与模型可放在项目 .env 中。
+    GLM_API_KEY = _get_system_environment('PAPERINFO_GLM_API_KEY')
+    DEEPSEEK_API_KEY = _get_system_environment('PAPERINFO_DEEPSEEK_API_KEY')
+    CUSTOM_GLM_BASE_URL = os.environ.get('CUSTOM_GLM_BASE_URL')
+    CUSTOM_GLM_MODEL = os.environ.get('CUSTOM_GLM_MODEL')
+    CUSTOM_DEEPSEEK_BASE_URL = os.environ.get('CUSTOM_DEEPSEEK_BASE_URL')
+    CUSTOM_DEEPSEEK_MODEL = os.environ.get('CUSTOM_DEEPSEEK_MODEL')
+    LLM_PRIMARY_FAILURE_COOLDOWN = int(os.environ.get('LLM_PRIMARY_FAILURE_COOLDOWN', '300'))
+
+    # 旧字段仅保留给其他调用方读取，不再用于论文评估器。
+    CUSTOM_LLM_API_KEY = os.environ.get('CUSTOM_LLM_API_KEY')
+    CUSTOM_LLM_BASE_URL = os.environ.get('CUSTOM_LLM_BASE_URL')
+    CUSTOM_LLM_MODEL = os.environ.get('CUSTOM_LLM_MODEL')
 
     # LLM 默认模型配置
     LLM_DEFAULT_MODELS = {
@@ -161,34 +204,12 @@ class Config:
                 'cs.SC',      # Symbolic Computation
                 'cs.IT'       # Information Theory
             ],
-            # CCF-A 类会议/期刊：只保留 DBLP 能识别的短名，去掉冗余全名别名
+            # 智能合约安全与自动修复的核心会议/期刊：使用 DBLP 可识别的简称
             'ccf_venues': [
-                # === 安全领域会议 (CCF-A) ===
-                'IEEE S&P', 'USENIX Security', 'NDSS',
-
-                # === 安全领域期刊 (CCF-A) ===
-                'IEEE TDSC', 'IEEE TIFS',
-
-                # === 软件工程会议 (CCF-A) ===
-                'ICSE', 'FSE', 'ASE', 'ISSTA', 'OOPSLA',
-
-                # === 软件工程期刊 (CCF-A) ===
+                'IEEE S&P', 'CCS', 'USENIX Security', 'NDSS',
+                'ICSE', 'FSE', 'ASE', 'ISSTA',
                 'IEEE TSE', 'ACM TOSEM',
-
-                # === AI会议 (CCF-A) ===
-                'AAAI', 'IJCAI', 'ICML', 'NeurIPS', 'ACL',
-
-                # === AI期刊 (CCF-A) ===
-                'IEEE TPAMI', 'JMLR',
-
-                # === 网络/系统会议 (CCF-A) ===
-                'SIGCOMM', 'MobiCom', 'OSDI', 'SOSP',
-
-                # === 网络期刊 (CCF-A) ===
-                'IEEE JSAC', 'IEEE TWC', 'IEEE TMC',
-
-                # === 交叉领域会议 (CCF-A) ===
-                'WWW', 'CAI', 'SEC'
+                'AAAI', 'IJCAI', 'ACL', 'WWW'
             ]
         },
         {

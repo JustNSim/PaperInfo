@@ -95,13 +95,19 @@ class DBLPCrawler(BaseCrawler):
         """将 venues 按 batch_size 分组"""
         return [venues[i:i + batch_size] for i in range(0, len(venues), batch_size)]
 
+    @staticmethod
+    def _build_keyword_query(keywords: List[str], limit: Optional[int] = None) -> str:
+        """按 DBLP CompleteSearch 语法使用管道符连接 OR 关键词。"""
+        selected = keywords[:limit] if limit else keywords
+        cleaned = [' '.join(keyword.split()) for keyword in selected if keyword.strip()]
+        return '|'.join(f'"{keyword}"' for keyword in cleaned)
+
     def _search_by_venue_pipe(self, keywords: List[str], venues: List[str],
                                from_year: Optional[int] = None,
                                to_year: Optional[int] = None) -> List[Dict[str, Any]]:
         """用管道符合并多个单词 venue 查询（DBLP 支持 venue:A|B|C 语法，不加引号）"""
         try:
-            query_keywords = keywords[:10]
-            keyword_query = ' OR '.join([f'"{kw}"' for kw in query_keywords])
+            keyword_query = self._build_keyword_query(keywords, limit=10)
 
             # 管道符合并 venue（不加引号，不含空格的 venue 名才用此方式）
             venue_part = '|'.join(venues)
@@ -152,8 +158,7 @@ class DBLPCrawler(BaseCrawler):
                          to_year: Optional[int] = None) -> List[Dict[str, Any]]:
         """按指定 venue 搜索（用于含空格的 venue 名，不加引号）"""
         try:
-            query_keywords = keywords[:10]
-            keyword_query = ' OR '.join([f'"{kw}"' for kw in query_keywords])
+            keyword_query = self._build_keyword_query(keywords, limit=10)
 
             # 不加引号（经测试 venue:"xxx" 会返回 0 结果）
             query = f'({keyword_query}) venue:{venue}'
@@ -203,7 +208,7 @@ class DBLPCrawler(BaseCrawler):
                        to_year: Optional[int] = None) -> List[Dict[str, Any]]:
         """通用查询（不指定 venue）"""
         try:
-            query = ' OR '.join([f'"{kw}"' for kw in keywords])
+            query = self._build_keyword_query(keywords)
 
             params = {
                 'q': query,

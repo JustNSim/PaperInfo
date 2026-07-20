@@ -72,8 +72,9 @@
 
                 <!-- 标题和来源 -->
                 <h5 class="card-title d-flex align-items-start gap-2">
-                    <a href="{{ paper.url }}" target="_blank" class="text-decoration-none flex-grow-1" id="title-{{ paper.id }}">{{ paper.title }}</a>
-                    <button class="btn btn-sm btn-link p-0 text-primary" onclick="translateTitle({{ paper.id }})" title="翻译标题">
+                    <a href="{{ paper.url }}" target="_blank" class="text-decoration-none flex-grow-1 paper-title-link"
+                       id="title-{{ paper.id }}" onclick="markPaperRead({{ paper.id }})">{{ paper.title }}</a>
+                    <button class="btn btn-sm btn-link p-0 text-primary" onclick="markPaperRead({{ paper.id }}); translateTitle({{ paper.id }})" title="翻译标题">
                         <i class="bi bi-translate"></i>
                     </button>
                 </h5>
@@ -107,12 +108,12 @@
                             <small>{{ paper.abstract[:300] }}{% if paper.abstract|length > 300 %}...{% endif %}</small>
                         </p>
                     </div>
-                    <button class="btn btn-sm btn-link p-0 text-primary flex-shrink-0" onclick="translateAbstract({{ paper.id }})" title="翻译摘要">
+                    <button class="btn btn-sm btn-link p-0 text-primary flex-shrink-0" onclick="markPaperRead({{ paper.id }}); translateAbstract({{ paper.id }})" title="翻译摘要">
                         <i class="bi bi-translate"></i>
                     </button>
                 </div>
                 {% if paper.abstract|length > 300 %}
-                <button class="btn btn-sm btn-link p-0" onclick="toggleAbstract({{ paper.id }})">
+                <button class="btn btn-sm btn-link p-0" onclick="markPaperRead({{ paper.id }}); toggleAbstract({{ paper.id }})">
                     <span id="abstract-toggle-{{ paper.id }}">展开全文</span>
                 </button>
                 {% endif %}
@@ -121,12 +122,12 @@
                 <!-- 操作按钮 -->
                 <div class="mt-2">
                     {% if paper.url %}
-                    <a href="{{ paper.url }}" target="_blank" class="btn btn-sm btn-outline-primary">
+                    <a href="{{ paper.url }}" target="_blank" class="btn btn-sm btn-outline-primary" onclick="markPaperRead({{ paper.id }})">
                         <i class="bi bi-link-45deg"></i> 原文链接
                     </a>
                     {% endif %}
                     {% if paper.pdf_url %}
-                    <a href="{{ paper.pdf_url }}" target="_blank" class="btn btn-sm btn-outline-danger">
+                    <a href="{{ paper.pdf_url }}" target="_blank" class="btn btn-sm btn-outline-danger" onclick="markPaperRead({{ paper.id }})">
                         <i class="bi bi-file-pdf"></i> PDF
                     </a>
                     {% endif %}

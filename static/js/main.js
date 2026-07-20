@@ -60,7 +60,46 @@ $(document).ready(function() {
         $('#sourceArxiv').prop('checked', sources.includes('arxiv'));
         $('#sourceDblp').prop('checked', sources.includes('dblp'));
     }
+
+    loadReadPaperState();
 });
+
+// ============== 已读论文状态 ==============
+const READ_PAPERS_STORAGE_KEY = 'paperinfo_read_paper_ids';
+let readPaperIds = new Set();
+
+function loadReadPaperState() {
+    try {
+        const savedIds = JSON.parse(localStorage.getItem(READ_PAPERS_STORAGE_KEY) || '[]');
+        readPaperIds = new Set(savedIds.map(String));
+    } catch (err) {
+        console.warn('恢复已读论文状态失败:', err);
+        readPaperIds = new Set();
+    }
+
+    document.querySelectorAll('.paper-card[data-id]').forEach(card => {
+        if (readPaperIds.has(String(card.dataset.id))) {
+            card.dataset.read = 'true';
+            card.querySelector('.paper-title-link')?.classList.add('paper-title-read');
+        }
+    });
+}
+
+function markPaperRead(paperId) {
+    const id = String(paperId);
+    readPaperIds.add(id);
+    try {
+        localStorage.setItem(READ_PAPERS_STORAGE_KEY, JSON.stringify([...readPaperIds]));
+    } catch (err) {
+        console.warn('保存已读论文状态失败:', err);
+    }
+
+    const card = document.querySelector(`.paper-card[data-id="${id}"]`);
+    if (card) {
+        card.dataset.read = 'true';
+        card.querySelector('.paper-title-link')?.classList.add('paper-title-read');
+    }
+}
 
 /**
  * 显示 Toast 通知

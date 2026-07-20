@@ -103,6 +103,11 @@ def _get_llm_evaluator(domain=None):
         return None
 
     try:
+        if Config.LLM_PROVIDER == 'custom' and not Config.GLM_API_KEY:
+            raise LLMEvaluatorError(
+                "PAPERINFO_GLM_API_KEY 未配置；论文评估不再读取旧的 CUSTOM_LLM_API_KEY"
+            )
+
         # 确定使用的prompt（优先级：领域prompt > 环境变量 > 默认prompt）
         if domain and domain.llm_prompt:
             system_prompt = domain.llm_prompt
@@ -113,7 +118,7 @@ def _get_llm_evaluator(domain=None):
 
         # 根据提供商选择正确的模型配置
         if Config.LLM_PROVIDER == 'custom':
-            model = Config.CUSTOM_LLM_MODEL
+            model = Config.CUSTOM_GLM_MODEL
         else:
             model = Config.LLM_MODEL
 
@@ -128,14 +133,33 @@ def _get_llm_evaluator(domain=None):
         if prompt_key not in _get_llm_evaluator._cache:
             evaluator = LLMEvaluator(
                 provider=Config.LLM_PROVIDER,
-                api_key=Config.LLM_API_KEY,
+                api_key=Config.GLM_API_KEY if Config.LLM_PROVIDER == 'custom' else Config.LLM_API_KEY,
                 model=model,
                 delay=Config.LLM_DELAY,
                 system_prompt=system_prompt,
-                enabled=Config.LLM_FILTER_ENABLED
+                enabled=Config.LLM_FILTER_ENABLED,
+                base_url=Config.CUSTOM_GLM_BASE_URL if Config.LLM_PROVIDER == 'custom' else None,
+                provider_label='GLM' if Config.LLM_PROVIDER == 'custom' else None,
+                fallback_api_key=Config.DEEPSEEK_API_KEY if Config.LLM_PROVIDER == 'custom' else None,
+                fallback_base_url=Config.CUSTOM_DEEPSEEK_BASE_URL if Config.LLM_PROVIDER == 'custom' else None,
+                fallback_model=Config.CUSTOM_DEEPSEEK_MODEL if Config.LLM_PROVIDER == 'custom' else None,
+                fallback_label='DeepSeek',
+                fallback_extra_body=(
+                    {'thinking': {'type': 'disabled'}}
+                    if Config.LLM_PROVIDER == 'custom' else None
+                ),
+                failure_cooldown=Config.LLM_PRIMARY_FAILURE_COOLDOWN,
+                timeout=Config.LLM_EVALUATION_TIMEOUT,
             )
             _get_llm_evaluator._cache[prompt_key] = evaluator
-            logger.info(f"LLM 评估器已初始化: provider={Config.LLM_PROVIDER}, model={model}, prompt={prompt_source}")
+            fallback_text = (
+                f", fallback={Config.CUSTOM_DEEPSEEK_MODEL}"
+                if Config.LLM_PROVIDER == 'custom' else ''
+            )
+            logger.info(
+                f"LLM 评估器已初始化: provider={Config.LLM_PROVIDER}, "
+                f"model={model}{fallback_text}, prompt={prompt_source}"
+            )
         else:
             evaluator = _get_llm_evaluator._cache[prompt_key]
 
@@ -147,9 +171,12 @@ def _get_llm_evaluator(domain=None):
         return None
 
 
-def _get_fetch_date_range():
+def _get_fetch_date_range(domain: Domain):
     """
-    获取抓取的时间范围
+    获取指定领域的抓取时间范围。
+
+    领域没有任何论文时视为首次抓取，使用默认历史窗口；否则从该领域
+    最近一次成功处理的时间开始增量抓取，避免被其他领域的更新记录干扰。
 
     Returns:
         (from_date, to_date) 元组，可能包含 None
@@ -157,71 +184,48 @@ def _get_fetch_date_range():
     from_date = None
     to_date = get_beijing_time()
 
-    # 检查论文表是否为空
-    paper_count = Paper.query.count()
-    if paper_count == 0:
-        logger.info("论文表为空，使用默认时间范围获取历史数据")
+    domain_paper_count = Paper.query.filter_by(domain_id=domain.id).count()
+    if domain_paper_count == 0:
+        logger.info(
+            f"领域 {domain.name} 尚无论文，首次抓取使用最近 "
+            f"{Config.FETCH_DAYS_BACK} 天"
+        )
         from_date = to_date - timedelta(days=Config.FETCH_DAYS_BACK)
         return from_date, to_date
 
-    # 检查最近是否有清空操作
-    try:
-        last_cleared = UpdateLog.query.filter_by(
-            trigger_type='data_cleared'
-        ).order_by(UpdateLog.trigger_time.desc()).first()
-        if last_cleared:
-            # 检查清空后是否有新的成功更新
-            last_successful = UpdateLog.query.filter(
-                UpdateLog.trigger_type.in_(['scheduled', 'manual']),
-                UpdateLog.status == 'success',
-                UpdateLog.trigger_time > last_cleared.trigger_time
-            ).first()
-            if not last_successful:
-                logger.info(f"检测到数据清空操作（{last_cleared.trigger_time.strftime('%Y-%m-%d %H:%M')}），使用默认时间范围")
-                from_date = to_date - timedelta(days=Config.FETCH_DAYS_BACK)
-                return from_date, to_date
-    except Exception as e:
-        logger.warning(f"检查清空记录失败: {e}")
-
     if Config.INCREMENTAL_UPDATE:
-        # 尝试获取上次更新时间
-        # 优先使用上次有新增论文的更新时间，而不是最近的空更新
         try:
-            # 查找最近一次成功且有新增论文的更新
-            last_log_with_papers = UpdateLog.query.filter(
+            successful_logs = UpdateLog.query.filter(
                 UpdateLog.trigger_type.in_(['scheduled', 'manual']),
-                UpdateLog.status == 'success',
-                UpdateLog.total_new > 0
-            ).order_by(UpdateLog.trigger_time.desc()).first()
+                UpdateLog.status == 'success'
+            ).order_by(UpdateLog.trigger_time.desc()).all()
 
-            # 检查上次更新时间（即使是空更新）
-            last_log = UpdateLog.query.filter_by(status='success').order_by(
-                UpdateLog.trigger_time.desc()
-            ).first()
+            last_domain_log = next(
+                (
+                    log for log in successful_logs
+                    if domain.id in (log.domains_processed or [])
+                ),
+                None
+            )
 
-            if last_log_with_papers:
-                # 有成功的历史记录，从那时起增量更新
-                from_date = last_log_with_papers.trigger_time
-                logger.info(f"增量更新：从 {from_date.strftime('%Y-%m-%d %H:%M')} 开始")
-            elif last_log:
-                # 上次更新成功但0篇论文，检查是否是最近的情况
-                time_since_last = (get_beijing_time() - last_log.trigger_time).total_seconds()
-                if time_since_last < 3600:  # 1小时内
-                    # 上次更新刚刚发生且0篇，说明可能当天没有新论文
-                    # 使用默认范围获取历史数据
-                    logger.info(f"上次更新在 {time_since_last/60:.1f} 分钟前且无新论文，使用默认时间范围")
-                    from_date = to_date - timedelta(days=Config.FETCH_DAYS_BACK)
-                else:
-                    # 超过1小时，尝试从上次更新时间开始
-                    from_date = last_log.trigger_time
-                    logger.info(f"增量更新：从 {from_date.strftime('%Y-%m-%d %H:%M')} 开始")
+            if last_domain_log:
+                from_date = last_domain_log.trigger_time
+                logger.info(
+                    f"领域 {domain.name} 增量更新：从 "
+                    f"{from_date.strftime('%Y-%m-%d %H:%M')} 开始"
+                )
         except Exception as e:
-            logger.warning(f"获取上次更新时间失败: {e}，将使用默认范围")
+            logger.warning(
+                f"获取领域 {domain.name} 上次更新时间失败: {e}，将使用默认范围"
+            )
 
     # 如果没有上次更新时间，使用配置的天数
     if not from_date and Config.FETCH_DAYS_BACK:
         from_date = to_date - timedelta(days=Config.FETCH_DAYS_BACK)
-        logger.info(f"使用默认时间范围：最近 {Config.FETCH_DAYS_BACK} 天")
+        logger.info(
+            f"领域 {domain.name} 没有成功更新记录，使用最近 "
+            f"{Config.FETCH_DAYS_BACK} 天"
+        )
 
     return from_date, to_date
 
@@ -251,7 +255,7 @@ def fetch_papers_for_domain(domain: Domain) -> dict:
     # 获取时间范围
     from_date, to_date = None, None
     if Config.ENABLE_TIME_FILTER:
-        from_date, to_date = _get_fetch_date_range()
+        from_date, to_date = _get_fetch_date_range(domain)
 
     try:
         # 1. 从 arXiv 抓取

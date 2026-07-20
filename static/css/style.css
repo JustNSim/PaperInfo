@@ -231,6 +231,21 @@ main.container-fluid {
     color: #667eea;
 }
 
+/* 已点击阅读的论文：仅将标题弱化，保留卡片其余信息的可读性 */
+.paper-card .card-title a.paper-title-read,
+.paper-card .card-title a.paper-title-read:hover {
+    color: #a8afb8 !important;
+}
+
+.paper-quick-filter-panel {
+    background: rgba(248, 249, 250, 0.72);
+    border-radius: 0 0 10px 10px;
+}
+
+.paper-quick-filter-panel .form-select {
+    border-radius: 18px;
+}
+
 /* 复选框样式 */
 .form-check-input {
     width: 1.2em;
