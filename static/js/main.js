@@ -314,8 +314,12 @@ if (searchInput.length) {
  * @returns {Promise<string>} 翻译结果
  */
 async function translateText(text) {
-    const MAX_LENGTH = 500;
+    const MAX_LENGTH = 3000;
     const textToTranslate = text.trim();
+
+    if (!textToTranslate) {
+        throw new Error('待翻译文本不能为空');
+    }
 
     if (textToTranslate.length <= MAX_LENGTH) {
         return await doTranslate(textToTranslate);
@@ -328,12 +332,9 @@ async function translateText(text) {
         try {
             const translated = await doTranslate(chunks[i]);
             translatedChunks.push(translated);
-            if (i < chunks.length - 1) {
-                await new Promise(resolve => setTimeout(resolve, 300));
-            }
         } catch (err) {
             console.error(`翻译第 ${i + 1} 段失败:`, err);
-            translatedChunks.push(chunks[i]);
+            throw err;
         }
     }
 
@@ -346,53 +347,17 @@ async function translateText(text) {
  * @returns {Promise<string>} 翻译结果
  */
 async function doTranslate(text) {
-    try {
-        const url = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=en|zh-CN`;
-        const response = await fetch(url);
-        if (!response.ok) {
-            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-        }
-        const data = await response.json();
-        if (data.responseStatus === 200 && data.responseData && data.responseData.translatedText) {
-            return data.responseData.translatedText;
-        }
-        if (data.responseStatus === 403 || data.responseStatus === 429) {
-            return await fallbackTranslate(text);
-        }
-        throw new Error(data.responseDetails || 'API 返回错误');
-    } catch (err) {
-        console.error('翻译请求失败:', err);
-        return await fallbackTranslate(text);
+    const response = await fetch('/api/translate', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({text})
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.success || !data.translated_text) {
+        throw new Error(data.message || `翻译请求失败（HTTP ${response.status}）`);
     }
-}
-
-/**
- * 备用翻译服务（LibreTranslate）
- * @param {string} text - 要翻译的文本
- * @returns {Promise<string>} 翻译结果
- */
-async function fallbackTranslate(text) {
-    try {
-        const url = 'https://libretranslate.com/translate';
-        const response = await fetch(url, {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({
-                q: text,
-                source: 'en',
-                target: 'zh',
-                format: 'text'
-            })
-        });
-        if (!response.ok) {
-            throw new Error(`LibreTranslate HTTP ${response.status}`);
-        }
-        const data = await response.json();
-        return data.translatedText;
-    } catch (err) {
-        console.error('备用翻译也失败:', err);
-        throw new Error('翻译服务暂时不可用，请稍后重试');
-    }
+    console.debug(`翻译服务提供方: ${data.provider}`);
+    return data.translated_text;
 }
 
 /**

@@ -15,6 +15,7 @@ from sqlalchemy.exc import IntegrityError
 from config import Config, config
 from models import db, Domain, Paper, UpdateLog
 from scheduler import setup_scheduler, manual_trigger_fetch, get_next_run_time, _evaluate_single_paper
+from translation_service import TranslationError, TranslationService
 
 # 创建应用日志
 logger = logging.getLogger(__name__)
@@ -23,6 +24,7 @@ logger = logging.getLogger(__name__)
 def create_app(config_name='default'):
     app = Flask(__name__)
     app.config.from_object(config[config_name])
+    app.extensions['translation_service'] = TranslationService.from_config(app.config)
 
     # 确保必要的目录存在
     os.makedirs(app.config['BASE_DIR'] + '/data', exist_ok=True)
@@ -877,6 +879,30 @@ def register_routes(app):
             'schedule_hour': Config.SCHEDULE_HOUR,
             'schedule_minute': Config.SCHEDULE_MINUTE
         })
+
+    @app.route('/api/translate', methods=['POST'])
+    def api_translate():
+        """API: 使用 Azure → DeepSeek → MyMemory 服务链翻译论文文本。"""
+        data = request.get_json(silent=True) or {}
+        text = data.get('text')
+        if not isinstance(text, str) or not text.strip():
+            return jsonify({'success': False, 'message': '待翻译文本不能为空'}), 400
+        if len(text) > 12000:
+            return jsonify({'success': False, 'message': '单次翻译文本不能超过 12000 个字符'}), 400
+
+        try:
+            result = app.extensions['translation_service'].translate(text)
+            return jsonify({
+                'success': True,
+                'translated_text': result.text,
+                'provider': result.provider,
+            })
+        except TranslationError:
+            logger.exception('All translation providers failed')
+            return jsonify({
+                'success': False,
+                'message': '翻译服务暂时不可用，请稍后重试',
+            }), 503
 
     @app.route('/api/clear', methods=['POST'])
     def api_clear():

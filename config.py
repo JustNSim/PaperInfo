@@ -105,6 +105,16 @@ class Config:
     CUSTOM_DEEPSEEK_MODEL = os.environ.get('CUSTOM_DEEPSEEK_MODEL')
     LLM_PRIMARY_FAILURE_COOLDOWN = int(os.environ.get('LLM_PRIMARY_FAILURE_COOLDOWN', '300'))
 
+    # 论文翻译：Azure 为主，DeepSeek 与 MyMemory 由服务层自动降级。
+    # Azure Key 只从操作系统环境变量读取，避免提交到项目文件或暴露给浏览器。
+    AZURE_TRANSLATE_API_KEY = _get_system_environment('AZURE_TRANSLATE_API_KEY')
+    AZURE_TRANSLATE_ENDPOINT = os.environ.get(
+        'AZURE_TRANSLATE_ENDPOINT',
+        'https://api.cognitive.microsofttranslator.com'
+    )
+    AZURE_TRANSLATE_REGION = _get_system_environment('AZURE_TRANSLATE_REGION')
+    TRANSLATION_TIMEOUT = int(os.environ.get('TRANSLATION_TIMEOUT', '20'))
+
     # 旧字段仅保留给其他调用方读取，不再用于论文评估器。
     CUSTOM_LLM_API_KEY = os.environ.get('CUSTOM_LLM_API_KEY')
     CUSTOM_LLM_BASE_URL = os.environ.get('CUSTOM_LLM_BASE_URL')

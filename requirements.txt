@@ -7,6 +7,6 @@ python-dotenv==1.0.0
 
 # Optional LLM Provider Dependencies
 # Install based on your chosen provider:
-# openai>=1.0.0        # For OpenAI (gpt-4o-mini, etc.)
+openai>=1.0.0         # DeepSeek fallback and OpenAI-compatible providers
 # anthropic>=0.18.0    # For Anthropic Claude
 # zhipuai>=2.0.0      # For Zhipu AI (GLM)
