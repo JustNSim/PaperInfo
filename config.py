@@ -124,6 +124,14 @@ class Config:
     AZURE_TRANSLATE_REGION = _get_system_environment('AZURE_TRANSLATE_REGION')
     TRANSLATION_TIMEOUT = int(os.environ.get('TRANSLATION_TIMEOUT', '20'))
 
+    # 更新结果通知：配置飞书群自定义机器人 Webhook 后自动启用。
+    # Webhook 与签名密钥属于敏感信息，推荐存放在操作系统环境变量中。
+    FEISHU_WEBHOOK_URL = _get_system_environment('PAPERINFO_FEISHU_WEBHOOK_URL')
+    FEISHU_WEBHOOK_SECRET = _get_system_environment('PAPERINFO_FEISHU_WEBHOOK_SECRET')
+    FEISHU_NOTIFICATION_TIMEOUT = int(os.environ.get('FEISHU_NOTIFICATION_TIMEOUT', '10'))
+    # 可选：手机可访问的 PaperInfo 地址，用于在通知中附带本次更新详情链接。
+    PAPERINFO_PUBLIC_URL = os.environ.get('PAPERINFO_PUBLIC_URL', '')
+
     # 旧字段仅保留给其他调用方读取，不再用于论文评估器。
     CUSTOM_LLM_API_KEY = os.environ.get('CUSTOM_LLM_API_KEY')
     CUSTOM_LLM_BASE_URL = os.environ.get('CUSTOM_LLM_BASE_URL')

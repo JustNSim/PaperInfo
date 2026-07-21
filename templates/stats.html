@@ -96,12 +96,13 @@
                                     <th>来源</th>
                                     <th>年份</th>
                                     <th>发布日期</th>
+                                    <th>添加时间</th>
                                     <th>操作</th>
                                 </tr>
                             </thead>
                             <tbody id="recentPapersTable">
                                 <tr>
-                                    <td colspan="5" class="text-center">加载中...</td>
+                                    <td colspan="6" class="text-center">加载中...</td>
                                 </tr>
                             </tbody>
                         </table>
@@ -280,7 +281,7 @@ function updateRecentPapers(papers) {
     const tbody = document.getElementById('recentPapersTable');
 
     if (!papers || papers.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="5" class="text-center">暂无论文</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="6" class="text-center">暂无论文</td></tr>';
         return;
     }
 
@@ -294,6 +295,7 @@ function updateRecentPapers(papers) {
             <td><span class="badge bg-primary">${paper.source}</span></td>
             <td>${paper.year || 'N/A'}</td>
             <td>${paper.published_date ? formatDate(paper.published_date) : 'N/A'}</td>
+            <td>${paper.fetched_date ? formatDateTime(paper.fetched_date) : 'N/A'}</td>
             <td>
                 ${paper.url ? `<a href="${paper.url}" target="_blank" class="btn btn-sm btn-outline-primary">查看</a>` : ''}
                 ${paper.pdf_url ? `<a href="${paper.pdf_url}" target="_blank" class="btn btn-sm btn-outline-danger">PDF</a>` : ''}
@@ -306,6 +308,14 @@ function updateRecentPapers(papers) {
 function formatDate(dateString) {
     const date = new Date(dateString);
     return date.toLocaleDateString('zh-CN');
+}
+
+function formatDateTime(dateString) {
+    const date = new Date(dateString);
+    return date.toLocaleString('zh-CN', {
+        year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', hour12: false
+    });
 }
 
 // 显示提示消息

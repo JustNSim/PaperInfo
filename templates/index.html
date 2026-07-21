@@ -378,6 +378,8 @@
                         </button>
                         <small class="text-muted ms-3">
                             发布于: {{ paper.published_date.strftime('%Y-%m-%d') if paper.published_date else 'N/A' }}
+                            <span class="mx-1">·</span>
+                            添加于: {{ paper.fetched_date.strftime('%Y-%m-%d %H:%M') if paper.fetched_date else 'N/A' }}
                         </small>
                     </div>
                 </div>

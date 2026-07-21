@@ -17,6 +17,7 @@ from models import db, Domain, Paper, UpdateLog
 from crawler import ArxivCrawler, DBLPCrawler, SemanticScholarCrawler
 from llm import LLMEvaluator, LLMEvaluatorError
 from models import get_beijing_time
+from notification_service import send_update_notification
 
 # 配置日志
 logging.basicConfig(
@@ -694,6 +695,17 @@ def _create_update_log(trigger_type: str, total_new: int = 0, source_stats: dict
             log_msg = f"操作日志已记录: {trigger_type}"
 
         logger.info(log_msg)
+        try:
+            domain_name_map = {
+                domain.id: domain.name
+                for domain in Domain.query.filter(Domain.id.in_(domain_ids)).all()
+            } if domain_ids else {}
+            send_update_notification(
+                log,
+                [domain_name_map[domain_id] for domain_id in domain_ids if domain_id in domain_name_map],
+            )
+        except Exception as notification_error:
+            logger.warning("准备更新通知失败，不影响已保存的更新日志: %s", notification_error)
     except Exception as e:
         logger.error(f"记录更新日志失败: {e}")
         db.session.rollback()
