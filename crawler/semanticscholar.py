@@ -22,8 +22,14 @@ class SemanticScholarCrawler(BaseCrawler):
     MIN_RELEVANCE_SCORE = 20
 
     def __init__(self, delay: float = DEFAULT_DELAY, timeout: int = 30,
-                 max_results: int = 100, api_keys: List[str] = None):
-        super().__init__(delay=delay, timeout=timeout)
+                 max_results: int = 100, api_keys: List[str] = None,
+                 max_retries: int = 2):
+        super().__init__(
+            delay=delay,
+            timeout=timeout,
+            max_retries=max_retries,
+            retry_after_default=10,
+        )
         self.max_results = max_results
         self._api_keys = api_keys or []
         self._key_index = 0

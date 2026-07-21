@@ -53,7 +53,7 @@ class UpdateLog(db.Model):
     __tablename__ = 'update_logs'
 
     id = db.Column(db.Integer, primary_key=True)
-    trigger_type = db.Column(db.String(20), nullable=False)  # 'scheduled', 'manual', 'rescore', 'delete_domain'
+    trigger_type = db.Column(db.String(20), nullable=False)  # scheduled/manual/catch_up/rescore 等
     trigger_time = db.Column(db.DateTime, default=get_beijing_time, index=True)
 
     # 更新结果统计

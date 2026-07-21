@@ -22,8 +22,14 @@ class DBLPCrawler(BaseCrawler):
     # 管道合并的 venue 每批最多数量
     PIPE_BATCH_SIZE = 15
 
-    def __init__(self, delay: float = DEFAULT_DELAY, timeout: int = 30, max_results: int = 100):
-        super().__init__(delay=delay, timeout=timeout)
+    def __init__(self, delay: float = DEFAULT_DELAY, timeout: int = 30,
+                 max_results: int = 100, max_retries: int = 1):
+        super().__init__(
+            delay=delay,
+            timeout=timeout,
+            max_retries=max_retries,
+            retry_after_default=10,
+        )
         self.max_results = max_results
 
     def search(self, keywords: List[str], venues: List[str] = None,
@@ -60,6 +66,9 @@ class DBLPCrawler(BaseCrawler):
             if simple_venues:
                 simple_batches = self._batch_venues(simple_venues, self.PIPE_BATCH_SIZE)
                 for i, batch in enumerate(simple_batches, 1):
+                    if self.circuit_open:
+                        logger.warning("DBLP 本轮请求已熔断，跳过其余 venue 批次")
+                        break
                     papers = self._search_by_venue_pipe(keywords, batch, from_year, to_year)
                     all_papers.extend(papers)
                     logger.info(f"简单 venue 批次 {i}/{len(simple_batches)} ({len(batch)} 个) 获取 {len(papers)} 篇论文")
@@ -71,6 +80,9 @@ class DBLPCrawler(BaseCrawler):
             if complex_venues and len(all_papers) < self.max_results:
                 logger.info(f"查询 {len(complex_venues)} 个含空格 venue（逐个查询）")
                 for i, venue in enumerate(complex_venues, 1):
+                    if self.circuit_open:
+                        logger.warning("DBLP 本轮请求已熔断，跳过其余 venue")
+                        break
                     papers = self._search_by_venue(keywords, venue, from_year, to_year)
                     all_papers.extend(papers)
                     logger.debug(f"Venue '{venue}' 获取 {len(papers)} 篇 ({i}/{len(complex_venues)})")

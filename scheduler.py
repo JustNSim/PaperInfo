@@ -44,26 +44,34 @@ llm_filtered_count = 0
 # 进程级锁文件路径（防止多实例并发抓取）
 _LOCK_FILE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', '.fetch.lock')
 _LOCK_FD = None
+_FETCH_THREAD_LOCK = threading.Lock()
 
 
 def _acquire_fetch_lock() -> bool:
-    """尝试获取抓取锁（文件锁），防止多进程并发抓取"""
+    """获取线程锁和文件锁，防止同进程或多进程并发抓取。"""
     global _LOCK_FD
+    if not _FETCH_THREAD_LOCK.acquire(blocking=False):
+        logger.warning("无法获取抓取锁，当前进程已有更新任务正在执行")
+        return False
+
+    lock_fd = None
     try:
         os.makedirs(os.path.dirname(_LOCK_FILE_PATH), exist_ok=True)
-        _LOCK_FD = open(_LOCK_FILE_PATH, 'w')
+        lock_fd = open(_LOCK_FILE_PATH, 'a+')
+        lock_fd.seek(0)
         if sys.platform == 'win32':
             import msvcrt
-            msvcrt.locking(_LOCK_FD.fileno(), msvcrt.LK_NBLCK, 1)
+            msvcrt.locking(lock_fd.fileno(), msvcrt.LK_NBLCK, 1)
         else:
             import fcntl
-            fcntl.flock(_LOCK_FD.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fcntl.flock(lock_fd.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        _LOCK_FD = lock_fd
         logger.debug("成功获取抓取锁")
         return True
     except (IOError, OSError):
-        if _LOCK_FD:
-            _LOCK_FD.close()
-            _LOCK_FD = None
+        if lock_fd:
+            lock_fd.close()
+        _FETCH_THREAD_LOCK.release()
         logger.warning("无法获取抓取锁，可能有另一个实例正在执行")
         return False
 
@@ -71,20 +79,28 @@ def _acquire_fetch_lock() -> bool:
 def _release_fetch_lock():
     """释放抓取锁"""
     global _LOCK_FD
+    lock_fd = _LOCK_FD
+    _LOCK_FD = None
     try:
-        if _LOCK_FD:
+        if lock_fd:
             if sys.platform == 'win32':
                 import msvcrt
-                _LOCK_FD.seek(0)
-                msvcrt.locking(_LOCK_FD.fileno(), msvcrt.LK_UNLCK, 1)
+                lock_fd.seek(0)
+                msvcrt.locking(lock_fd.fileno(), msvcrt.LK_UNLCK, 1)
             else:
                 import fcntl
-                fcntl.flock(_LOCK_FD.fileno(), fcntl.LOCK_UN)
-            _LOCK_FD.close()
-            _LOCK_FD = None
+                fcntl.flock(lock_fd.fileno(), fcntl.LOCK_UN)
             logger.debug("已释放抓取锁")
     except Exception as e:
         logger.warning(f"释放抓取锁失败: {e}")
+    finally:
+        if lock_fd:
+            try:
+                lock_fd.close()
+            except Exception:
+                pass
+        if _FETCH_THREAD_LOCK.locked():
+            _FETCH_THREAD_LOCK.release()
 
 
 def _get_llm_evaluator(domain=None):
@@ -196,7 +212,7 @@ def _get_fetch_date_range(domain: Domain):
     if Config.INCREMENTAL_UPDATE:
         try:
             successful_logs = UpdateLog.query.filter(
-                UpdateLog.trigger_type.in_(['scheduled', 'manual']),
+                UpdateLog.trigger_type.in_(['scheduled', 'manual', 'catch_up']),
                 UpdateLog.status == 'success'
             ).order_by(UpdateLog.trigger_time.desc()).all()
 
@@ -230,7 +246,50 @@ def _get_fetch_date_range(domain: Domain):
     return from_date, to_date
 
 
-def fetch_papers_for_domain(domain: Domain) -> dict:
+def _create_source_crawlers() -> dict:
+    """为一次更新创建共享客户端，统一限速并支持跨领域熔断。"""
+    crawlers = {
+        'arxiv': ArxivCrawler(
+            delay=Config.ARXIV_DELAY,
+            timeout=Config.ARXIV_REQUEST_TIMEOUT,
+            max_results=Config.MAX_PAPERS_PER_SOURCE,
+            max_retries=Config.ARXIV_MAX_RETRIES,
+        ),
+        'dblp': DBLPCrawler(
+            delay=Config.DBLP_DELAY,
+            timeout=Config.DBLP_REQUEST_TIMEOUT,
+            max_results=Config.MAX_PAPERS_PER_SOURCE,
+            max_retries=Config.DBLP_MAX_RETRIES,
+        ),
+    }
+    if Config.S2_API_KEYS:
+        crawlers['s2'] = SemanticScholarCrawler(
+            delay=Config.S2_DELAY,
+            timeout=Config.S2_REQUEST_TIMEOUT,
+            max_results=100,
+            api_keys=Config.S2_API_KEYS,
+            max_retries=Config.S2_MAX_RETRIES,
+        )
+    return crawlers
+
+
+def _close_source_crawlers(crawlers: dict):
+    for crawler in (crawlers or {}).values():
+        try:
+            crawler.close()
+        except Exception as exc:
+            logger.debug("关闭来源客户端失败: %s", exc)
+
+
+def _source_failure_details(crawlers: dict) -> dict:
+    return {
+        source: crawler.circuit_reason
+        for source, crawler in (crawlers or {}).items()
+        if crawler.circuit_open
+    }
+
+
+def fetch_papers_for_domain(domain: Domain, source_crawlers: dict = None) -> dict:
     """
     为指定领域抓取论文
 
@@ -245,6 +304,7 @@ def fetch_papers_for_domain(domain: Domain) -> dict:
         }
     """
     logger.info(f"开始抓取领域: {domain.name}")
+    source_crawlers = source_crawlers or _create_source_crawlers()
     result = {
         'domain_id': domain.id,
         'domain_name': domain.name,
@@ -261,11 +321,7 @@ def fetch_papers_for_domain(domain: Domain) -> dict:
         # 1. 从 arXiv 抓取
         if domain.arxiv_categories:
             logger.info(f"从 arXiv 抓取 {domain.name} 论文...")
-            arxiv_crawler = ArxivCrawler(
-                delay=Config.ARXIV_DELAY,
-                timeout=Config.REQUEST_TIMEOUT,
-                max_results=Config.MAX_PAPERS_PER_SOURCE
-            )
+            arxiv_crawler = source_crawlers['arxiv']
             arxiv_papers = arxiv_crawler.search(
                 keywords=domain.keywords,
                 categories=domain.arxiv_categories,
@@ -278,11 +334,7 @@ def fetch_papers_for_domain(domain: Domain) -> dict:
         else:
             # 即使没有指定分类，也用关键词搜索
             logger.info(f"从 arXiv 用关键词抓取 {domain.name} 论文...")
-            arxiv_crawler = ArxivCrawler(
-                delay=Config.ARXIV_DELAY,
-                timeout=Config.REQUEST_TIMEOUT,
-                max_results=Config.MAX_PAPERS_PER_SOURCE
-            )
+            arxiv_crawler = source_crawlers['arxiv']
             arxiv_papers = arxiv_crawler.search(
                 keywords=domain.keywords,
                 from_date=from_date,
@@ -302,11 +354,7 @@ def fetch_papers_for_domain(domain: Domain) -> dict:
             logger.info(f"从 DBLP 抓取 {domain.name} 论文...")
             logger.info(f"DBLP 年份窗口: {from_year}-{to_year} (最近 {Config.DBLP_YEAR_WINDOW} 年)")
 
-            dblp_crawler = DBLPCrawler(
-                delay=Config.DBLP_DELAY,
-                timeout=Config.REQUEST_TIMEOUT,
-                max_results=Config.MAX_PAPERS_PER_SOURCE
-            )
+            dblp_crawler = source_crawlers['dblp']
             dblp_papers = dblp_crawler.search(
                 keywords=domain.keywords,
                 venues=domain.ccf_venues,
@@ -323,12 +371,7 @@ def fetch_papers_for_domain(domain: Domain) -> dict:
             result['source_stats']['s2'] = 0
         else:
             logger.info(f"从 Semantic Scholar 抓取 {domain.name} 论文... ({len(Config.S2_API_KEYS)} 个 API Key 轮换)")
-            s2_crawler = SemanticScholarCrawler(
-                delay=Config.S2_DELAY,
-                timeout=Config.REQUEST_TIMEOUT,
-                max_results=100,
-                api_keys=Config.S2_API_KEYS
-            )
+            s2_crawler = source_crawlers['s2']
             core_keywords = domain.keywords[:5] if domain.keywords else None
             s2_papers = s2_crawler.search(
                 keywords=domain.keywords,
@@ -604,7 +647,7 @@ def _create_update_log(trigger_type: str, total_new: int = 0, source_stats: dict
     创建更新日志记录
 
     Args:
-        trigger_type: 触发类型 ('scheduled', 'manual', 'rescore', 'delete_domain')
+        trigger_type: 触发类型 ('scheduled', 'manual', 'catch_up', 'rescore', 'delete_domain')
         total_new: 新增论文总数
         source_stats: 来源统计 {'arxiv': 10, 'dblp': 5}
         domain_ids: 处理的领域 ID 列表
@@ -639,7 +682,7 @@ def _create_update_log(trigger_type: str, total_new: int = 0, source_stats: dict
         db.session.commit()
 
         # 根据不同类型生成不同的日志消息
-        if trigger_type in ['scheduled', 'manual']:
+        if trigger_type in ['scheduled', 'manual', 'catch_up']:
             log_msg = f"更新日志已记录: {trigger_type} - 新增 {total_new} 篇论文"
             if Config.LLM_FILTER_ENABLED and llm_filtered > 0:
                 log_msg += f" (LLM 过滤 {llm_filtered} 篇)"
@@ -664,53 +707,77 @@ def scheduled_fetch_job():
         logger.error("Flask 应用实例未初始化，无法执行定时任务")
         return
 
-    with flask_app.app_context():
-        logger.info("=" * 50)
-        logger.info(f"开始执行定时抓取任务: {datetime.now()}")
-        logger.info("=" * 50)
+    if not _acquire_fetch_lock():
+        logger.warning("定时抓取未启动：另一个更新任务正在执行")
+        return
 
-        global llm_filtered_count
-        llm_filtered_count = 0  # 重置 LLM 过滤计数器
-
-        total_new = 0
-        all_source_stats = {'arxiv': 0, 'dblp': 0}
-        domain_results = []
-        domains = []  # 提前初始化，避免 except 块中 NameError
-
-        try:
-            # 获取所有启用的领域
-            domains = Domain.query.filter_by(enabled=True).all()
-
-            if not domains:
-                logger.warning("没有启用的领域，跳过抓取")
-                return
-
-            logger.info(f"找到 {len(domains)} 个启用的领域")
-
-            for domain in domains:
-                result = fetch_papers_for_domain(domain)
-                total_new += result.get('new_count', 0)
-                # 合并来源统计
-                for source, count in result.get('source_stats', {}).items():
-                    all_source_stats[source] = all_source_stats.get(source, 0) + count
-                domain_results.append(result)
-
+    source_crawlers = {}
+    try:
+        with flask_app.app_context():
+            started_at = get_beijing_time()
             logger.info("=" * 50)
-            logger.info(f"定时抓取任务完成，共新增 {total_new} 篇论文")
-            if Config.LLM_FILTER_ENABLED and llm_filtered_count > 0:
-                logger.info(f"LLM 过滤了 {llm_filtered_count} 篇不相关论文")
+            logger.info(f"开始执行定时抓取任务: {started_at}")
             logger.info("=" * 50)
 
-            # 记录更新日志
-            _create_update_log('scheduled', total_new, all_source_stats, [d.id for d in domains], 'success', llm_filtered=llm_filtered_count)
+            global llm_filtered_count
+            llm_filtered_count = 0  # 重置 LLM 过滤计数器
 
-        except Exception as e:
-            logger.error(f"定时抓取任务出错: {e}")
-            # 记录失败日志
-            _create_update_log('scheduled', 0, {'arxiv': 0, 'dblp': 0}, [d.id for d in domains], 'failed', str(e), llm_filtered=0)
+            total_new = 0
+            all_source_stats = {'arxiv': 0, 'dblp': 0}
+            domain_results = []
+            domains = []  # 提前初始化，避免 except 块中 NameError
+
+            try:
+                domains = Domain.query.filter_by(enabled=True).all()
+                if not domains:
+                    logger.warning("没有启用的领域，跳过抓取")
+                    return
+
+                logger.info(f"找到 {len(domains)} 个启用的领域")
+                source_crawlers = _create_source_crawlers()
+
+                for domain in domains:
+                    result = fetch_papers_for_domain(domain, source_crawlers)
+                    total_new += result.get('new_count', 0)
+                    for source, count in result.get('source_stats', {}).items():
+                        all_source_stats[source] = all_source_stats.get(source, 0) + count
+                    domain_results.append(result)
+
+                duration_seconds = round(
+                    (get_beijing_time() - started_at).total_seconds(), 1
+                )
+                logger.info("=" * 50)
+                logger.info(
+                    f"定时抓取任务完成，共新增 {total_new} 篇论文，"
+                    f"耗时 {duration_seconds} 秒"
+                )
+                if Config.LLM_FILTER_ENABLED and llm_filtered_count > 0:
+                    logger.info(f"LLM 过滤了 {llm_filtered_count} 篇不相关论文")
+                logger.info("=" * 50)
+
+                _create_update_log(
+                    'scheduled', total_new, all_source_stats,
+                    [d.id for d in domains], 'success',
+                    llm_filtered=llm_filtered_count,
+                    operation_details={
+                        'started_at': started_at.isoformat(),
+                        'duration_seconds': duration_seconds,
+                        'source_failures': _source_failure_details(source_crawlers),
+                    },
+                )
+
+            except Exception as e:
+                logger.error(f"定时抓取任务出错: {e}")
+                _create_update_log(
+                    'scheduled', 0, {'arxiv': 0, 'dblp': 0},
+                    [d.id for d in domains], 'failed', str(e), llm_filtered=0
+                )
+    finally:
+        _close_source_crawlers(source_crawlers)
+        _release_fetch_lock()
 
 
-def manual_trigger_fetch(domain_id: int = None) -> dict:
+def manual_trigger_fetch(domain_id: int = None, trigger_type: str = 'manual') -> dict:
     """
     手动触发抓取
 
@@ -720,7 +787,8 @@ def manual_trigger_fetch(domain_id: int = None) -> dict:
     Returns:
         结果字典
     """
-    logger.info(f"手动触发抓取，domain_id: {domain_id}")
+    trigger_label = '补执行' if trigger_type == 'catch_up' else '手动'
+    logger.info(f"{trigger_label}触发抓取，domain_id: {domain_id}")
 
     # 获取进程锁，防止多实例并发
     if not _acquire_fetch_lock():
@@ -735,6 +803,8 @@ def manual_trigger_fetch(domain_id: int = None) -> dict:
 
     global llm_filtered_count
     llm_filtered_count = 0  # 重置 LLM 过滤计数器
+    started_at = get_beijing_time()
+    source_crawlers = {}
 
     result = {
         'success': True,
@@ -760,8 +830,9 @@ def manual_trigger_fetch(domain_id: int = None) -> dict:
             return result
 
         domain_ids = []
+        source_crawlers = _create_source_crawlers()
         for domain in domains:
-            domain_result = fetch_papers_for_domain(domain)
+            domain_result = fetch_papers_for_domain(domain, source_crawlers)
             result['new_papers'] += domain_result.get('new_count', 0)
             result['domains_processed'] += 1
             domain_ids.append(domain_result['domain_id'])
@@ -776,21 +847,36 @@ def manual_trigger_fetch(domain_id: int = None) -> dict:
             result['message'] = f'成功处理 {result["domains_processed"]} 个领域，新增 {result["new_papers"]} 篇论文'
 
         # 记录更新日志
-        _create_update_log('manual', result['new_papers'], result['source_stats'], domain_ids, 'success', llm_filtered=llm_filtered_count)
+        duration_seconds = round(
+            (get_beijing_time() - started_at).total_seconds(), 1
+        )
+        _create_update_log(
+            trigger_type, result['new_papers'], result['source_stats'], domain_ids,
+            'success', llm_filtered=llm_filtered_count,
+            operation_details={
+                'started_at': started_at.isoformat(),
+                'duration_seconds': duration_seconds,
+                'source_failures': _source_failure_details(source_crawlers),
+            },
+        )
 
     except Exception as e:
-        logger.error(f"手动触发抓取失败: {e}")
+        logger.error(f"{trigger_label}触发抓取失败: {e}")
         result['success'] = False
         result['message'] = f'抓取失败: {str(e)}'
 
         # 记录失败日志
         try:
             domain_ids = [d.id for d in Domain.query.filter_by(enabled=True).all()]
-            _create_update_log('manual', 0, {'arxiv': 0, 'dblp': 0}, domain_ids, 'failed', str(e), llm_filtered=0)
+            _create_update_log(
+                trigger_type, 0, {'arxiv': 0, 'dblp': 0}, domain_ids,
+                'failed', str(e), llm_filtered=0
+            )
         except:
             pass
 
     finally:
+        _close_source_crawlers(source_crawlers)
         _release_fetch_lock()
 
     return result
@@ -818,6 +904,7 @@ def check_and_catch_up():
 
             # 防重复：检查最近 30 分钟内是否有任何更新记录（包括手动触发的）
             recent_update = UpdateLog.query.filter(
+                UpdateLog.trigger_type.in_(['scheduled', 'manual', 'catch_up']),
                 UpdateLog.status == 'success',
                 UpdateLog.trigger_time > now - timedelta(minutes=30)
             ).first()
@@ -837,10 +924,20 @@ def check_and_catch_up():
                 logger.debug(f"当前时间未到今日执行时间 ({Config.SCHEDULE_HOUR:02d}:{Config.SCHEDULE_MINUTE:02d})，跳过补执行检查")
                 return False
 
-            # 获取最后一次成功的定时更新记录
-            last_scheduled_update = UpdateLog.query.filter_by(
-                trigger_type='scheduled',
-                status='success'
+            # 正常定时任务会在计划时间启动，但完成日志要等抓取结束后才写入。
+            # 在保护窗口内不能仅因“尚无今日完成日志”就误判为漏跑。
+            catch_up_after = _catch_up_grace_deadline(today_scheduled)
+            if now < catch_up_after:
+                logger.debug(
+                    "当前仍在定时任务保护窗口内（%s 前），跳过补执行检查",
+                    catch_up_after.strftime('%H:%M')
+                )
+                return False
+
+            # 成功的定时任务或补执行都表示当天计划已完成。
+            last_scheduled_update = UpdateLog.query.filter(
+                UpdateLog.trigger_type.in_(['scheduled', 'catch_up']),
+                UpdateLog.status == 'success'
             ).order_by(UpdateLog.trigger_time.desc()).first()
 
             should_catch_up = False
@@ -862,15 +959,16 @@ def check_and_catch_up():
                 logger.info("开始执行补更新...")
 
                 try:
-                    result = manual_trigger_fetch()
+                    result = manual_trigger_fetch(trigger_type='catch_up')
                     if result.get('success'):
                         logger.info(f"补执行成功: {result.get('message')}")
+                        return True
                     else:
                         logger.warning(f"补执行失败: {result.get('message')}")
+                        return False
                 except Exception as e:
                     logger.error(f"补执行出错: {e}")
-
-                return True
+                    return False
 
             logger.debug("无需补执行，定时任务已是最新")
             return False
@@ -878,6 +976,11 @@ def check_and_catch_up():
     except Exception as e:
         logger.error(f"检查补执行时出错: {e}")
         return False
+
+
+def _catch_up_grace_deadline(scheduled_time: datetime) -> datetime:
+    """返回正常定时任务结束保护窗口的截止时间。"""
+    return scheduled_time + timedelta(minutes=Config.CATCH_UP_GRACE_MINUTES)
 
 
 # 记录上次检查日期，避免同一天重复补执行

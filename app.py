@@ -167,7 +167,7 @@ def register_routes(app):
         domain_paper_counts = {}
         for d in all_domains:
             last_log = UpdateLog.query.filter(
-                UpdateLog.trigger_type.in_(['scheduled', 'manual']),
+                UpdateLog.trigger_type.in_(['scheduled', 'manual', 'catch_up']),
                 UpdateLog.status == 'success',
                 UpdateLog.domains_processed.contains([d.id])
             ).order_by(UpdateLog.trigger_time.desc()).first()
@@ -195,10 +195,26 @@ def register_routes(app):
             if domain:
                 domain_name = domain.name
 
-        # 获取最后更新时间
-        last_update = None
-        if papers:
-            last_update = papers[0].fetched_date.strftime('%Y-%m-%d %H:%M')
+        # 获取最近一次成功完成的更新任务时间；不能使用列表首篇论文的入库时间，
+        # 因为论文按发布日期排序，而且新增 0 篇的任务不会产生新的 fetched_date。
+        successful_update_logs = UpdateLog.query.filter(
+            UpdateLog.trigger_type.in_(['scheduled', 'manual', 'catch_up']),
+            UpdateLog.status == 'success'
+        ).order_by(UpdateLog.trigger_time.desc()).all()
+        if domain_id:
+            last_successful_update = next(
+                (
+                    log for log in successful_update_logs
+                    if domain_id in (log.domains_processed or [])
+                ),
+                None
+            )
+        else:
+            last_successful_update = successful_update_logs[0] if successful_update_logs else None
+        last_update = (
+            last_successful_update.trigger_time.strftime('%Y-%m-%d %H:%M')
+            if last_successful_update else None
+        )
 
         # 获取下次运行时间
         next_run = None
@@ -207,7 +223,7 @@ def register_routes(app):
 
         # 获取更新事件列表（用于筛选下拉框）
         update_logs = UpdateLog.query.filter(
-            UpdateLog.trigger_type.in_(['scheduled', 'manual']),
+            UpdateLog.trigger_type.in_(['scheduled', 'manual', 'catch_up']),
             UpdateLog.status == 'success',
             UpdateLog.total_new > 0
         ).order_by(UpdateLog.trigger_time.desc()).limit(30).all()

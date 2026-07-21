@@ -56,6 +56,10 @@
                                         <span class="badge bg-success">
                                             <i class="bi bi-hand-index"></i> 手动
                                         </span>
+                                        {% elif log.trigger_type == 'catch_up' %}
+                                        <span class="badge bg-warning text-dark">
+                                            <i class="bi bi-arrow-clockwise"></i> 补执行
+                                        </span>
                                         {% elif log.trigger_type == 'rescore' %}
                                         <span class="badge bg-primary">
                                             <i class="bi bi-arrow-repeat"></i> 重评
@@ -88,7 +92,7 @@
                                         {% endif %}
                                     </td>
                                     <td>
-                                        {% if log.trigger_type == 'scheduled' or log.trigger_type == 'manual' %}
+                                        {% if log.trigger_type in ['scheduled', 'manual', 'catch_up'] %}
                                         <small>
                                             {% if log.status == 'success' %}
                                             <span class="text-success">
@@ -99,6 +103,18 @@
                                             <br><span class="text-warning">
                                                 <i class="bi bi-funnel"></i>
                                                 LLM 过滤 {{ log.llm_filtered }} 篇
+                                            </span>
+                                            {% endif %}
+                                            {% if log.operation_details and log.operation_details.duration_seconds is defined %}
+                                            <br><span class="text-muted">
+                                                <i class="bi bi-stopwatch"></i>
+                                                耗时 {{ log.operation_details.duration_seconds }} 秒
+                                            </span>
+                                            {% endif %}
+                                            {% if log.operation_details and log.operation_details.source_failures %}
+                                            <br><span class="text-warning">
+                                                <i class="bi bi-exclamation-triangle"></i>
+                                                本轮暂停来源：{{ log.operation_details.source_failures.keys()|join('、') }}
                                             </span>
                                             {% endif %}
                                             {% elif log.status == 'failed' %}
@@ -270,7 +286,7 @@
                     <div class="card text-center">
                         <div class="card-body">
                             <h6 class="card-subtitle mb-2 text-muted">抓取成功</h6>
-                            <h3 class="card-title text-success">{{ logs|selectattr('trigger_type', 'in', ['scheduled', 'manual'])|selectattr('status', 'equalto', 'success')|list|length }} 次</h3>
+                            <h3 class="card-title text-success">{{ logs|selectattr('trigger_type', 'in', ['scheduled', 'manual', 'catch_up'])|selectattr('status', 'equalto', 'success')|list|length }} 次</h3>
                         </div>
                     </div>
                 </div>

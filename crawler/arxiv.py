@@ -15,7 +15,8 @@ logger = logging.getLogger(__name__)
 class ArxivCrawler(BaseCrawler):
     """arXiv API 爬虫"""
 
-    ARXIV_API_URL = 'http://export.arxiv.org/api/query'
+    # 直接使用 HTTPS，避免 HTTP 重定向带来的额外连接和握手。
+    ARXIV_API_URL = 'https://export.arxiv.org/api/query'
     # 关键词分批查询：每批查询的关键词数量（减少批次避免429）
     KEYWORD_BATCH_SIZE = 15
     # 每批查询获取的最大结果数
@@ -25,8 +26,14 @@ class ArxivCrawler(BaseCrawler):
     # arXiv 建议的请求间隔（秒）
     DEFAULT_DELAY = 4.0
 
-    def __init__(self, delay: float = DEFAULT_DELAY, timeout: int = 30, max_results: int = 100):
-        super().__init__(delay=delay, timeout=timeout)
+    def __init__(self, delay: float = DEFAULT_DELAY, timeout: int = 30,
+                 max_results: int = 100, max_retries: int = 1):
+        super().__init__(
+            delay=delay,
+            timeout=timeout,
+            max_retries=max_retries,
+            retry_after_default=15,
+        )
         self.max_results = max_results
 
     def search(self, keywords: List[str], categories: List[str] = None,
@@ -67,6 +74,10 @@ class ArxivCrawler(BaseCrawler):
                                          from_date=from_date, to_date=to_date)
         all_papers.extend(core_papers)
         logger.info(f"核心关键词获取 {len(core_papers)} 篇论文")
+
+        if self.circuit_open:
+            logger.warning("arXiv 本轮请求已熔断，跳过其余关键词批次")
+            return self._deduplicate_papers(all_papers)
 
         # 只有核心词结果不足时，才查询扩展关键词
         if extended_keywords and len(all_papers) < max_results:

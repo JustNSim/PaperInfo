@@ -56,6 +56,8 @@ class Config:
     SCHEDULE_HOUR = 2       # 每天更新时间：小时 (24小时制)
     SCHEDULE_MINUTE = 0     # 每天更新时间：分钟
     CATCH_UP_ENABLED = True  # 是否启用补执行机制（启动时检查并执行错过的定时任务）
+    # 定时点后的保护窗口：给正常定时任务留出执行时间，避免补执行与其同时启动。
+    CATCH_UP_GRACE_MINUTES = int(os.environ.get('CATCH_UP_GRACE_MINUTES', '30'))
 
     # 爬虫配置
     ARXIV_DELAY = 4                 # arXiv API 请求间隔（秒）
@@ -66,6 +68,13 @@ class Config:
     S2_API_KEYS = [k.strip() for k in os.environ.get('S2_API_KEYS', '').split(',') if k.strip()]
     MAX_PAPERS_PER_SOURCE = 300     # 每个数据源最大抓取论文数（提高到300以支持分批查询）
     REQUEST_TIMEOUT = 30            # 请求超时时间（秒）
+    # 各来源使用独立超时/重试预算。一次失败后会在本轮更新内熔断，避免跨领域重复等待。
+    ARXIV_REQUEST_TIMEOUT = int(os.environ.get('ARXIV_REQUEST_TIMEOUT', '20'))
+    ARXIV_MAX_RETRIES = int(os.environ.get('ARXIV_MAX_RETRIES', '1'))
+    DBLP_REQUEST_TIMEOUT = int(os.environ.get('DBLP_REQUEST_TIMEOUT', '15'))
+    DBLP_MAX_RETRIES = int(os.environ.get('DBLP_MAX_RETRIES', '1'))
+    S2_REQUEST_TIMEOUT = int(os.environ.get('S2_REQUEST_TIMEOUT', '20'))
+    S2_MAX_RETRIES = int(os.environ.get('S2_MAX_RETRIES', '2'))
 
     # DBLP 时间窗口（DBLP 论文批量入库，不适合增量更新）
     DBLP_YEAR_WINDOW = int(os.environ.get('DBLP_YEAR_WINDOW', '3'))  # 查最近 N 年的论文
@@ -178,7 +187,7 @@ class Config:
     }
 
     # API 端点
-    ARXIV_API_URL = 'http://export.arxiv.org/api/query'
+    ARXIV_API_URL = 'https://export.arxiv.org/api/query'
     DBLP_API_URL = 'https://dblp.org/search/publ/api'
 
     # 分页配置
