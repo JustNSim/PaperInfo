@@ -13,12 +13,33 @@ from flask import Flask, render_template, request, jsonify, Response, stream_wit
 from sqlalchemy.exc import IntegrityError
 
 from config import Config, config
-from models import db, Domain, Paper, UpdateLog
+from models import db, Domain, Paper, UpdateLog, ReadHistory, get_beijing_time
 from scheduler import setup_scheduler, manual_trigger_fetch, get_next_run_time, _evaluate_single_paper
 from translation_service import TranslationError, TranslationService
 
 # 创建应用日志
 logger = logging.getLogger(__name__)
+
+# 领域配色板（高区分度，避免相近色；按领域 ID 确定性分配，保证各页面展示一致）
+DOMAIN_COLORS = [
+    '#2563eb',  # 蓝
+    '#16a34a',  # 绿
+    '#d97706',  # 琥珀
+    '#dc2626',  # 红
+    '#7c3aed',  # 紫
+    '#db2777',  # 品红
+    '#0891b2',  # 青
+    '#65a30d',  # 黄绿
+    '#c2410c',  # 橙
+    '#475569',  # 石板灰
+]
+
+
+def domain_color(domain_id):
+    """按领域 ID 分配固定颜色（首页徽章、历史页、统计图表共用）"""
+    if domain_id is None:
+        return DOMAIN_COLORS[-1]
+    return DOMAIN_COLORS[(domain_id - 1) % len(DOMAIN_COLORS)]
 
 # 创建 Flask 应用
 def create_app(config_name='default'):
@@ -44,6 +65,9 @@ def create_app(config_name='default'):
 
     # 注册路由
     register_routes(app)
+
+    # 领域配色函数注入模板（index/history 等页面的领域徽章使用）
+    app.jinja_env.globals['domain_color'] = domain_color
 
     return app
 
@@ -71,6 +95,75 @@ def _init_default_domains():
             print(f"初始化默认领域时出错: {e}")
 
 
+def _query_papers_by_filters(filters: dict):
+    """
+    按筛选条件构建 Paper 查询（供跨页全选批量操作/导出复用）
+
+    filters: {'domain': int, 'source': [..], 'year': int, 'days': int,
+              'q': str, 'update_log': int}（与 index 路由同名参数语义一致）
+    """
+    query = Paper.query
+
+    domain_id = filters.get('domain')
+    if domain_id:
+        query = query.filter_by(domain_id=int(domain_id))
+
+    sources = filters.get('source') or []
+    if sources:
+        query = query.filter(Paper.source.in_(sources))
+
+    year = filters.get('year')
+    if year:
+        query = query.filter_by(year=int(year))
+
+    days = filters.get('days')
+    if days:
+        days = min(int(days), 3650)
+        query = query.filter(
+            Paper.published_date >= datetime.now() - timedelta(days=days)
+        )
+
+    keyword = (filters.get('q') or '').strip()
+    if keyword:
+        pattern = f'%{keyword}%'
+        query = query.filter(
+            db.or_(
+                Paper.title.ilike(pattern),
+                Paper.abstract.ilike(pattern),
+                Paper.venue.ilike(pattern)
+            )
+        )
+
+    update_log_id = filters.get('update_log')
+    if update_log_id:
+        log = UpdateLog.query.get(int(update_log_id))
+        if log:
+            query = query.filter(
+                Paper.fetched_date >= log.trigger_time - timedelta(minutes=5),
+                Paper.fetched_date <= log.trigger_time + timedelta(minutes=5)
+            )
+
+    return query
+
+
+def _selection_query(data: dict):
+    """
+    解析批量操作/导出的目标论文查询
+
+    支持三种方式（优先级从高到低）：
+    - select_all: true + filters → 当前筛选条件下的全部论文（跨页）
+    - favorites: true → 全部收藏论文
+    - paper_ids: [...] → 显式选中的论文
+    """
+    if data.get('select_all'):
+        return _query_papers_by_filters(data.get('filters') or {})
+    if data.get('favorites'):
+        return Paper.query.filter_by(is_favorite=True)
+    paper_ids = data.get('paper_ids') or []
+    # 空列表时匹配一个不存在的 id，返回空查询集
+    return Paper.query.filter(Paper.id.in_(paper_ids if paper_ids else [-1]))
+
+
 def register_routes(app):
     """注册所有路由"""
 
@@ -78,6 +171,15 @@ def register_routes(app):
     def stats():
         """统计页面"""
         return render_template('stats.html')
+
+    @app.route('/history')
+    def history():
+        """历史页面 - 最近抓取与最近点击的论文"""
+        recent_fetched = Paper.query.order_by(Paper.fetched_date.desc()).limit(50).all()
+        recent_reads = ReadHistory.query.order_by(ReadHistory.last_read_at.desc()).limit(50).all()
+        return render_template('history.html',
+                             recent_fetched=recent_fetched,
+                             recent_reads=recent_reads)
 
     @app.route('/')
     def index():
@@ -163,15 +265,22 @@ def register_routes(app):
         all_domains = Domain.query.order_by(Domain.enabled.desc(), Domain.name.asc()).all()
 
         # 计算每个领域的上次更新时间和论文数
+        # 注意：SQLite 下 JSON contains([id]) 实际是按 LIKE '%[id]%' 匹配，只能命中
+        # 单元素数组，多领域一起更新的记录匹配不到，改为在 Python 侧判断
+        recent_success_logs = UpdateLog.query.filter(
+            UpdateLog.trigger_type.in_(['scheduled', 'manual', 'catch_up']),
+            UpdateLog.status == 'success'
+        ).order_by(UpdateLog.trigger_time.desc()).limit(200).all()
+
         domain_last_updates = {}
         domain_paper_counts = {}
         for d in all_domains:
-            last_log = UpdateLog.query.filter(
-                UpdateLog.trigger_type.in_(['scheduled', 'manual', 'catch_up']),
-                UpdateLog.status == 'success',
-                UpdateLog.domains_processed.contains([d.id])
-            ).order_by(UpdateLog.trigger_time.desc()).first()
-            domain_last_updates[d.id] = last_log.trigger_time if last_log else None
+            last_time = None
+            for log in recent_success_logs:
+                if d.id in (log.domains_processed or []):
+                    last_time = log.trigger_time
+                    break
+            domain_last_updates[d.id] = last_time
             domain_paper_counts[d.id] = d.papers.count()
 
         # 获取可用年份列表
@@ -294,6 +403,150 @@ def register_routes(app):
             'pages': pagination.pages,
             'current_page': page
         })
+
+    @app.route('/api/papers/<int:paper_id>/read', methods=['POST'])
+    def api_mark_paper_read(paper_id):
+        """API: 记录一次论文点击（upsert，每篇一行）"""
+        Paper.query.get_or_404(paper_id)
+        try:
+            history = ReadHistory.query.filter_by(paper_id=paper_id).first()
+            if history:
+                history.read_count += 1
+                history.last_read_at = get_beijing_time()
+            else:
+                history = ReadHistory(paper_id=paper_id, read_count=1,
+                                      last_read_at=get_beijing_time())
+                db.session.add(history)
+            db.session.commit()
+            return jsonify({'success': True, 'read_count': history.read_count})
+        except Exception as e:
+            db.session.rollback()
+            return jsonify({'success': False, 'message': str(e)}), 500
+
+    @app.route('/api/export/csv', methods=['POST'])
+    def api_export_csv():
+        """API: 导出论文为 CSV（选中/跨页全选/收藏）"""
+        data = request.get_json() or {}
+        papers = _selection_query(data).all()
+        if not papers:
+            return jsonify({'success': False, 'message': '没有可导出的论文'}), 400
+
+        import csv
+        import io
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow(['Title', 'Authors', 'Abstract', 'Source', 'Venue', 'Year', 'Published', 'URL', 'PDF'])
+        for p in papers:
+            writer.writerow([
+                p.title,
+                '; '.join(p.authors or []),
+                p.abstract or '',
+                p.source,
+                p.venue or '',
+                p.year or '',
+                p.published_date.strftime('%Y-%m-%d') if p.published_date else '',
+                p.url or '',
+                p.pdf_url or ''
+            ])
+
+        # BOM 保证 Excel 正确识别 UTF-8
+        content = '\ufeff' + output.getvalue()
+        filename = f"papers_{datetime.now().strftime('%Y%m%d')}.csv"
+        return Response(
+            content,
+            mimetype='text/csv; charset=utf-8',
+            headers={'Content-Disposition': f'attachment; filename={filename}'}
+        )
+
+    @app.route('/api/export/xlsx', methods=['POST'])
+    def api_export_xlsx():
+        """API: 导出论文为 Excel xlsx（选中/跨页全选/收藏）"""
+        data = request.get_json() or {}
+        papers = _selection_query(data).all()
+        if not papers:
+            return jsonify({'success': False, 'message': '没有可导出的论文'}), 400
+
+        import io
+        from openpyxl import Workbook
+        wb = Workbook()
+        ws = wb.active
+        ws.title = 'papers'
+        ws.append(['Title', 'Authors', 'Abstract', 'Source', 'Venue', 'Year', 'Published', 'URL', 'PDF'])
+        for p in papers:
+            ws.append([
+                p.title,
+                '; '.join(p.authors or []),
+                p.abstract or '',
+                p.source,
+                p.venue or '',
+                p.year or '',
+                p.published_date.strftime('%Y-%m-%d') if p.published_date else '',
+                p.url or '',
+                p.pdf_url or ''
+            ])
+
+        # 基础列宽，便于直接阅读
+        for col, width in {'A': 60, 'B': 30, 'C': 80, 'D': 8, 'E': 20,
+                           'F': 8, 'G': 12, 'H': 40, 'I': 40}.items():
+            ws.column_dimensions[col].width = width
+        ws.freeze_panes = 'A2'  # 冻结表头行
+
+        buf = io.BytesIO()
+        wb.save(buf)
+        filename = f"papers_{datetime.now().strftime('%Y%m%d')}.xlsx"
+        return Response(
+            buf.getvalue(),
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            headers={'Content-Disposition': f'attachment; filename={filename}'}
+        )
+
+    @app.route('/api/export/bibtex', methods=['POST'])
+    def api_export_bibtex():
+        """API: 导出论文为 BibTeX（选中/跨页全选/收藏）"""
+        data = request.get_json() or {}
+        papers = _selection_query(data).all()
+        if not papers:
+            return jsonify({'success': False, 'message': '没有可导出的论文'}), 400
+
+        import re
+        entries = []
+        used_keys = set()
+        for p in papers:
+            # BibTeX key：第一作者姓氏 + 年份 + 标题首词，冲突时追加 b/c/...
+            first_author = (p.authors or ['Unknown'])[0]
+            author_tokens = first_author.replace(',', ' ').split()
+            surname = re.sub(r'[^a-zA-Z]', '', author_tokens[-1] if author_tokens else 'Unknown') or 'Unknown'
+            year = str(p.year) if p.year else 'nd'
+            title_words = p.title.split()
+            first_word = re.sub(r'[^a-zA-Z0-9]', '', title_words[0] if title_words else 'Paper') or 'Paper'
+            key = f'{surname}{year}{first_word}'
+            suffix = ''
+            while key + suffix in used_keys:
+                suffix = chr(ord(suffix) + 1) if suffix else 'b'
+            key += suffix
+            used_keys.add(key)
+
+            entry_type = 'article' if p.source == 'arxiv' else 'inproceedings'
+            fields = [
+                f'  title={{{p.title}}}',
+                f'  author={{{" and ".join(p.authors or [])}}}'
+            ]
+            if p.year:
+                fields.append(f'  year={{{p.year}}}')
+            if p.venue:
+                field_name = 'journal' if entry_type == 'article' else 'booktitle'
+                fields.append(f'  {field_name}={{{p.venue}}}')
+            if p.url:
+                fields.append(f'  url={{{p.url}}}')
+            entries.append(f'@{entry_type}{{{key},\n' + ',\n'.join(fields) + '\n}')
+
+        content = '\n\n'.join(entries)
+        filename = f"papers_{datetime.now().strftime('%Y%m%d')}.bib"
+        return Response(
+            content,
+            mimetype='application/x-bibtex; charset=utf-8',
+            headers={'Content-Disposition': f'attachment; filename={filename}'}
+        )
 
     @app.route('/api/domains', methods=['GET'])
     def api_domains():
@@ -825,6 +1078,53 @@ def register_routes(app):
         recent = Paper.query.order_by(Paper.published_date.desc()).limit(5).all()
         stats['recent_papers'] = [p.to_dict() for p in recent]
 
+        # 收藏数与新增统计
+        now = get_beijing_time()
+        stats['favorites_count'] = Paper.query.filter_by(is_favorite=True).count()
+        stats['week_new'] = Paper.query.filter(
+            Paper.fetched_date >= now - timedelta(days=7)
+        ).count()
+        stats['month_new'] = Paper.query.filter(
+            Paper.fetched_date >= now - timedelta(days=30)
+        ).count()
+
+        # 整体平均评分
+        avg_rel = db.session.query(db.func.avg(Paper.llm_score)).filter(
+            Paper.llm_score.isnot(None)
+        ).scalar()
+        avg_val = db.session.query(db.func.avg(Paper.llm_value_score)).filter(
+            Paper.llm_value_score.isnot(None)
+        ).scalar()
+        stats['avg_relevance'] = int(avg_rel) if avg_rel else None
+        stats['avg_value'] = int(avg_val) if avg_val else None
+
+        # 月度分布（按发布日期，最近 12 个月，缺失月份补零）
+        month_col = db.func.strftime('%Y-%m', Paper.published_date)
+        month_rows = db.session.query(
+            month_col, db.func.count(Paper.id)
+        ).filter(
+            Paper.published_date.isnot(None)
+        ).group_by(month_col).all()
+        month_counts = {m: c for m, c in month_rows if m}
+        by_month = {}
+        cursor = now.replace(day=1)
+        for _ in range(12):
+            key = cursor.strftime('%Y-%m')
+            by_month[key] = month_counts.get(key, 0)
+            cursor = (cursor - timedelta(days=1)).replace(day=1)
+        stats['by_month'] = dict(sorted(by_month.items()))
+
+        # 相关度评分分布（5 个分档）
+        score_dist = {}
+        for label, lo, hi in [('0-19', 0, 19), ('20-39', 20, 39), ('40-59', 40, 59),
+                              ('60-79', 60, 79), ('80-100', 80, 100)]:
+            score_dist[label] = Paper.query.filter(
+                Paper.llm_score.isnot(None),
+                Paper.llm_score >= lo,
+                Paper.llm_score <= hi
+            ).count()
+        stats['score_distribution'] = score_dist
+
         # 各领域详细统计
         domains = Domain.query.filter_by(enabled=True).all()
         for domain in domains:
@@ -864,6 +1164,7 @@ def register_routes(app):
             stats['domains'].append({
                 'id': domain.id,
                 'name': domain.name,
+                'color': domain_color(domain.id),
                 'total': domain_papers.count(),
                 'by_source': by_source,
                 'by_year': by_year_dict,
@@ -974,11 +1275,11 @@ def register_routes(app):
         data = request.get_json() or {}
         paper_ids = data.get('paper_ids', [])
 
-        if not paper_ids:
+        if not paper_ids and not data.get('select_all'):
             return jsonify({'success': False, 'message': '请选择要收藏的论文'}), 400
 
         try:
-            count = Paper.query.filter(Paper.id.in_(paper_ids)).update(
+            count = _selection_query(data).update(
                 {Paper.is_favorite: True},
                 synchronize_session=False
             )
@@ -998,11 +1299,11 @@ def register_routes(app):
         data = request.get_json() or {}
         paper_ids = data.get('paper_ids', [])
 
-        if not paper_ids:
+        if not paper_ids and not data.get('select_all'):
             return jsonify({'success': False, 'message': '请选择要取消收藏的论文'}), 400
 
         try:
-            count = Paper.query.filter(Paper.id.in_(paper_ids)).update(
+            count = _selection_query(data).update(
                 {Paper.is_favorite: False},
                 synchronize_session=False
             )
@@ -1022,12 +1323,12 @@ def register_routes(app):
         data = request.get_json() or {}
         paper_ids = data.get('paper_ids', [])
 
-        if not paper_ids:
+        if not paper_ids and not data.get('select_all'):
             return jsonify({'success': False, 'message': '请选择要删除的论文'}), 400
 
         try:
             # 获取要删除的论文信息（用于记录日志）
-            papers_to_delete = Paper.query.filter(Paper.id.in_(paper_ids)).all()
+            papers_to_delete = _selection_query(data).all()
 
             if not papers_to_delete:
                 return jsonify({'success': False, 'message': '未找到要删除的论文'}), 400

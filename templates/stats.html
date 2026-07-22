@@ -3,76 +3,69 @@
 {% block title %}PaperInfo - 数据统计{% endblock %}
 
 {% block content %}
-<div class="container-fluid py-4">
-    <h2 class="mb-4">
-        <i class="bi bi-graph-up"></i> 数据统计
-        <a href="/" class="btn btn-outline-primary btn-sm float-end">
-            <i class="bi bi-arrow-left"></i> 返回论文列表
+<div class="container-fluid">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h4 class="mb-0"><i class="bi bi-graph-up"></i> 数据统计</h4>
+        <a href="/history" class="btn btn-sm btn-outline-secondary">
+            <i class="bi bi-arrow-counterclockwise"></i> 查看历史
         </a>
-    </h2>
+    </div>
 
-    <!-- 统计卡片 -->
-    <div class="row mb-4">
-        <div class="col-md-4">
-            <div class="card text-white bg-primary">
-                <div class="card-body">
-                    <h5 class="card-title"><i class="bi bi-file-text"></i> 论文总数</h5>
-                    <h2 class="card-text" id="totalPapers">-</h2>
-                </div>
+    <!-- KPI 卡片 -->
+    <div class="row g-2 mb-3">
+        <div class="col-6 col-md-4 col-xl-2">
+            <div class="stats-card">
+                <div class="stats-number" id="totalPapers">-</div>
+                <div class="text-muted small mt-1"><i class="bi bi-file-text"></i> 论文总数</div>
             </div>
         </div>
-        <div class="col-md-4">
-            <div class="card text-white bg-success">
-                <div class="card-body">
-                    <h5 class="card-title"><i class="bi bi-folder"></i> 研究领域</h5>
-                    <h2 class="card-text" id="totalDomains">-</h2>
-                </div>
+        <div class="col-6 col-md-4 col-xl-2">
+            <div class="stats-card">
+                <div class="stats-number" id="totalDomains">-</div>
+                <div class="text-muted small mt-1"><i class="bi bi-folder"></i> 研究领域</div>
             </div>
         </div>
-        <div class="col-md-4">
-            <div class="card text-white bg-info">
-                <div class="card-body">
-                    <h5 class="card-title"><i class="bi bi-database"></i> 数据源</h5>
-                    <h4 class="card-text mt-2">
-                        <span class="badge bg-light text-dark">arXiv: <span id="arxivCount">-</span></span>
-                        <span class="badge bg-light text-dark ms-2">DBLP: <span id="dblpCount">-</span></span>
-                    </h4>
-                </div>
+        <div class="col-6 col-md-4 col-xl-2">
+            <div class="stats-card">
+                <div class="stats-number" id="favoritesCount" style="color: var(--warning);">-</div>
+                <div class="text-muted small mt-1"><i class="bi bi-star"></i> 收藏</div>
+            </div>
+        </div>
+        <div class="col-6 col-md-4 col-xl-2">
+            <div class="stats-card">
+                <div class="stats-number" id="weekNew" style="color: var(--success);">-</div>
+                <div class="text-muted small mt-1"><i class="bi bi-plus-circle"></i> 本周新增</div>
+            </div>
+        </div>
+        <div class="col-6 col-md-4 col-xl-2">
+            <div class="stats-card">
+                <div class="stats-number" id="avgRelevance" style="color: var(--success);">-</div>
+                <div class="text-muted small mt-1"><i class="bi bi-bullseye"></i> 平均相关度</div>
+            </div>
+        </div>
+        <div class="col-6 col-md-4 col-xl-2">
+            <div class="stats-card">
+                <div class="stats-number" id="avgValue" style="color: var(--info);">-</div>
+                <div class="text-muted small mt-1"><i class="bi bi-gem"></i> 平均价值</div>
             </div>
         </div>
     </div>
 
-    <!-- 图表区域 -->
-    <div class="row mb-4">
-        <div class="col-md-4">
-            <div class="card">
-                <div class="card-header">
-                    <h6 class="mb-0"><i class="bi bi-bar-chart"></i> 年份分布</h6>
-                </div>
+    <!-- 月度趋势 + 数据源 -->
+    <div class="row g-2 mb-3">
+        <div class="col-md-8">
+            <div class="card h-100">
+                <div class="card-header"><i class="bi bi-graph-up-arrow"></i> 月度发文趋势（最近 12 个月，按发布日期）</div>
                 <div class="card-body">
-                    <canvas id="yearChart"></canvas>
+                    <div style="height: 260px;"><canvas id="monthChart"></canvas></div>
                 </div>
             </div>
         </div>
         <div class="col-md-4">
-            <div class="card">
-                <div class="card-header">
-                    <h6 class="mb-0"><i class="bi bi-diagram-3"></i> 研究领域分布</h6>
-                </div>
+            <div class="card h-100">
+                <div class="card-header"><i class="bi bi-pie-chart"></i> 数据源分布</div>
                 <div class="card-body">
-                    <div style="height: 250px; display: flex; justify-content: center;">
-                        <canvas id="domainChart"></canvas>
-                    </div>
-                </div>
-            </div>
-        </div>
-        <div class="col-md-4">
-            <div class="card">
-                <div class="card-header">
-                    <h6 class="mb-0"><i class="bi bi-pie-chart"></i> 数据源分布</h6>
-                </div>
-                <div class="card-body">
-                    <div style="height: 250px; display: flex; justify-content: center;">
+                    <div style="height: 260px; display: flex; justify-content: center;">
                         <canvas id="sourceChart"></canvas>
                     </div>
                 </div>
@@ -80,34 +73,58 @@
         </div>
     </div>
 
-    <!-- 最近论文 -->
-    <div class="row">
-        <div class="col-12">
-            <div class="card">
-                <div class="card-header">
-                    <h6 class="mb-0"><i class="bi bi-clock-history"></i> 最近抓取的论文</h6>
-                </div>
+    <!-- 年份 + 评分 + 领域 -->
+    <div class="row g-2 mb-3">
+        <div class="col-md-4">
+            <div class="card h-100">
+                <div class="card-header"><i class="bi bi-bar-chart"></i> 年份分布</div>
                 <div class="card-body">
-                    <div class="table-responsive">
-                        <table class="table table-hover">
-                            <thead>
-                                <tr>
-                                    <th>标题</th>
-                                    <th>来源</th>
-                                    <th>年份</th>
-                                    <th>发布日期</th>
-                                    <th>添加时间</th>
-                                    <th>操作</th>
-                                </tr>
-                            </thead>
-                            <tbody id="recentPapersTable">
-                                <tr>
-                                    <td colspan="6" class="text-center">加载中...</td>
-                                </tr>
-                            </tbody>
-                        </table>
+                    <div style="height: 240px;"><canvas id="yearChart"></canvas></div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card h-100">
+                <div class="card-header"><i class="bi bi-bar-chart-steps"></i> 相关度评分分布</div>
+                <div class="card-body">
+                    <div style="height: 240px;"><canvas id="scoreChart"></canvas></div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card h-100">
+                <div class="card-header"><i class="bi bi-diagram-3"></i> 研究领域分布</div>
+                <div class="card-body">
+                    <div style="height: 240px; display: flex; justify-content: center;">
+                        <canvas id="domainChart"></canvas>
                     </div>
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 领域明细 -->
+    <div class="card">
+        <div class="card-header"><i class="bi bi-list-columns"></i> 领域明细</div>
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-hover mb-0">
+                    <thead>
+                        <tr>
+                            <th>领域</th>
+                            <th class="text-end">论文数</th>
+                            <th class="text-end">arXiv</th>
+                            <th class="text-end">DBLP</th>
+                            <th class="text-end">S2</th>
+                            <th class="text-end">平均相关度</th>
+                            <th class="text-end">平均价值</th>
+                            <th class="text-end">状态</th>
+                        </tr>
+                    </thead>
+                    <tbody id="domainTable">
+                        <tr><td colspan="8" class="text-center text-muted py-3">加载中...</td></tr>
+                    </tbody>
+                </table>
             </div>
         </div>
     </div>
@@ -117,52 +134,94 @@
 {% block scripts %}
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script>
-let sourceChart, yearChart, domainChart;
+// 与全站一致的主题色
+const THEME = {
+    primary: '#2563eb',
+    success: '#16a34a',
+    info:    '#0284c7',
+    warning: '#d97706',
+    danger:  '#dc2626',
+    purple:  '#7c3aed',
+    pink:    '#db2777'
+};
+const PALETTE = [THEME.primary, THEME.success, THEME.info, THEME.warning, THEME.purple, THEME.pink, THEME.danger];
 
-// 加载统计数据
+let monthChart, sourceChart, yearChart, scoreChart, domainChart;
+
 async function loadStats() {
     try {
         const response = await fetch('/api/stats');
         const data = await response.json();
 
-        // 更新统计卡片
+        // KPI
         document.getElementById('totalPapers').textContent = data.total_papers;
         document.getElementById('totalDomains').textContent = data.total_domains;
-        document.getElementById('arxivCount').textContent = data.by_source.arxiv || 0;
-        document.getElementById('dblpCount').textContent = data.by_source.dblp || 0;
+        document.getElementById('favoritesCount').textContent = data.favorites_count ?? 0;
+        document.getElementById('weekNew').textContent = '+' + (data.week_new ?? 0);
+        document.getElementById('avgRelevance').textContent = data.avg_relevance ?? '—';
+        document.getElementById('avgValue').textContent = data.avg_value ?? '—';
 
-        // 绘制数据源饼图
-        drawSourceChart(data.by_source);
-
-        // 绘制年份柱状图
-        drawYearChart(data.by_year);
-
-        // 绘制研究领域分布图
+        drawMonthChart(data.by_month || {});
+        drawSourceChart(data.by_source || {});
+        drawYearChart(data.by_year || {});
+        drawScoreChart(data.score_distribution || {});
         if (data.domains && data.domains.length > 0) {
             drawDomainChart(data.domains);
+            fillDomainTable(data.domains);
+        } else {
+            document.getElementById('domainTable').innerHTML =
+                '<tr><td colspan="8" class="text-center text-muted py-3">暂无领域数据</td></tr>';
         }
-
-        // 更新最近论文表格
-        updateRecentPapers(data.recent_papers);
-
     } catch (error) {
         console.error('加载统计数据失败:', error);
-        showAlert('加载统计数据失败', 'danger');
+        document.getElementById('domainTable').innerHTML =
+            '<tr><td colspan="8" class="text-center text-muted py-3">加载失败，请刷新重试</td></tr>';
     }
 }
 
-// 绘制数据源饼图
+// 月度发文趋势（折线图）
+function drawMonthChart(monthData) {
+    const ctx = document.getElementById('monthChart').getContext('2d');
+    if (monthChart) monthChart.destroy();
+
+    const labels = Object.keys(monthData);
+    const data = labels.map(m => monthData[m]);
+
+    monthChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: labels,
+            datasets: [{
+                label: '论文数量',
+                data: data,
+                borderColor: THEME.primary,
+                backgroundColor: 'rgba(37, 99, 235, 0.08)',
+                fill: true,
+                tension: 0.35,
+                pointRadius: 3,
+                pointBackgroundColor: THEME.primary,
+                borderWidth: 2
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+                y: { beginAtZero: true, ticks: { precision: 0 } },
+                x: { ticks: { maxRotation: 45 } }
+            },
+            plugins: { legend: { display: false } }
+        }
+    });
+}
+
+// 数据源分布（环形图）
 function drawSourceChart(sourceData) {
     const ctx = document.getElementById('sourceChart').getContext('2d');
-
-    if (sourceChart) {
-        sourceChart.destroy();
-    }
+    if (sourceChart) sourceChart.destroy();
 
     const labels = [];
     const data = [];
-    const colors = ['#0d6efd', '#dc3545', '#198754', '#ffc107', '#0dcaf0'];
-
     for (const [source, count] of Object.entries(sourceData)) {
         labels.push(source.toUpperCase());
         data.push(count);
@@ -174,32 +233,25 @@ function drawSourceChart(sourceData) {
             labels: labels,
             datasets: [{
                 data: data,
-                backgroundColor: colors.slice(0, labels.length),
+                backgroundColor: PALETTE.slice(0, labels.length),
                 borderWidth: 2,
                 borderColor: '#fff'
             }]
         },
         options: {
             responsive: true,
-            plugins: {
-                legend: {
-                    position: 'bottom'
-                }
-            }
+            maintainAspectRatio: false,
+            plugins: { legend: { position: 'bottom' } }
         }
     });
 }
 
-// 绘制年份柱状图
+// 年份分布（柱状图）
 function drawYearChart(yearData) {
     const ctx = document.getElementById('yearChart').getContext('2d');
+    if (yearChart) yearChart.destroy();
 
-    if (yearChart) {
-        yearChart.destroy();
-    }
-
-    // 按年份排序
-    const sortedYears = Object.keys(yearData).sort().reverse();
+    const sortedYears = Object.keys(yearData).sort();
     const data = sortedYears.map(year => yearData[year]);
 
     yearChart = new Chart(ctx, {
@@ -209,41 +261,57 @@ function drawYearChart(yearData) {
             datasets: [{
                 label: '论文数量',
                 data: data,
-                backgroundColor: '#0d6efd',
-                borderColor: '#0a58ca',
-                borderWidth: 1
+                backgroundColor: THEME.primary,
+                borderRadius: 4
             }]
         },
         options: {
             responsive: true,
-            scales: {
-                y: {
-                    beginAtZero: true,
-                    ticks: {
-                        stepSize: 1
-                    }
-                }
-            },
-            plugins: {
-                legend: {
-                    display: false
-                }
-            }
+            maintainAspectRatio: false,
+            scales: { y: { beginAtZero: true, ticks: { precision: 0 } } },
+            plugins: { legend: { display: false } }
         }
     });
 }
 
-// 绘制研究领域分布饼图
+// 相关度评分分布（柱状图，分档着色）
+function drawScoreChart(scoreData) {
+    const ctx = document.getElementById('scoreChart').getContext('2d');
+    if (scoreChart) scoreChart.destroy();
+
+    const labels = Object.keys(scoreData);
+    const data = labels.map(k => scoreData[k]);
+    const colors = ['#9ca3af', '#d97706', '#eab308', '#84cc16', '#16a34a'];
+
+    scoreChart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: labels,
+            datasets: [{
+                label: '论文数量',
+                data: data,
+                backgroundColor: colors.slice(0, labels.length),
+                borderRadius: 4
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: { y: { beginAtZero: true, ticks: { precision: 0 } } },
+            plugins: { legend: { display: false } }
+        }
+    });
+}
+
+// 研究领域分布（环形图）
 function drawDomainChart(domains) {
     const ctx = document.getElementById('domainChart').getContext('2d');
-
-    if (domainChart) {
-        domainChart.destroy();
-    }
+    if (domainChart) domainChart.destroy();
 
     const labels = domains.map(d => d.name);
     const data = domains.map(d => d.total);
-    const colors = ['#0d6efd', '#dc3545', '#198754', '#ffc107', '#0dcaf0', '#6610f2', '#fd7e14'];
+    // 与后端 domain_color 一致：同一领域在徽章/饼图/明细表中同色
+    const colors = domains.map((d, i) => d.color || PALETTE[i % PALETTE.length]);
 
     domainChart = new Chart(ctx, {
         type: 'doughnut',
@@ -251,17 +319,16 @@ function drawDomainChart(domains) {
             labels: labels,
             datasets: [{
                 data: data,
-                backgroundColor: colors.slice(0, labels.length),
+                backgroundColor: colors,
                 borderWidth: 2,
                 borderColor: '#fff'
             }]
         },
         options: {
             responsive: true,
+            maintainAspectRatio: false,
             plugins: {
-                legend: {
-                    position: 'bottom'
-                },
+                legend: { position: 'bottom' },
                 tooltip: {
                     callbacks: {
                         label: function(context) {
@@ -276,55 +343,23 @@ function drawDomainChart(domains) {
     });
 }
 
-// 更新最近论文表格
-function updateRecentPapers(papers) {
-    const tbody = document.getElementById('recentPapersTable');
-
-    if (!papers || papers.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="6" class="text-center">暂无论文</td></tr>';
-        return;
-    }
-
-    tbody.innerHTML = papers.map(paper => `
+// 领域明细表
+function fillDomainTable(domains) {
+    const tbody = document.getElementById('domainTable');
+    tbody.innerHTML = domains.map(d => `
         <tr>
-            <td>
-                <a href="${paper.url || '#'}" target="_blank" class="text-decoration-none">
-                    ${paper.title.length > 80 ? paper.title.substring(0, 80) + '...' : paper.title}
-                </a>
-            </td>
-            <td><span class="badge bg-primary">${paper.source}</span></td>
-            <td>${paper.year || 'N/A'}</td>
-            <td>${paper.published_date ? formatDate(paper.published_date) : 'N/A'}</td>
-            <td>${paper.fetched_date ? formatDateTime(paper.fetched_date) : 'N/A'}</td>
-            <td>
-                ${paper.url ? `<a href="${paper.url}" target="_blank" class="btn btn-sm btn-outline-primary">查看</a>` : ''}
-                ${paper.pdf_url ? `<a href="${paper.pdf_url}" target="_blank" class="btn btn-sm btn-outline-danger">PDF</a>` : ''}
-            </td>
+            <td><span class="domain-dot" style="background:${d.color || '#475569'}"></span><a href="/?domain=${d.id}" class="text-decoration-none fw-medium">${d.name}</a></td>
+            <td class="text-end fw-bold">${d.total}</td>
+            <td class="text-end">${d.by_source.arxiv || 0}</td>
+            <td class="text-end">${d.by_source.dblp || 0}</td>
+            <td class="text-end">${d.by_source.s2 || 0}</td>
+            <td class="text-end">${d.avg_relevance !== null ? `<span class="badge bg-success">${d.avg_relevance}</span>` : '—'}</td>
+            <td class="text-end">${d.avg_value !== null ? `<span class="badge bg-info">${d.avg_value}</span>` : '—'}</td>
+            <td class="text-end">${d.enabled ? '<span class="badge bg-success">启用</span>' : '<span class="badge bg-secondary">停用</span>'}</td>
         </tr>
     `).join('');
 }
 
-// 格式化日期
-function formatDate(dateString) {
-    const date = new Date(dateString);
-    return date.toLocaleDateString('zh-CN');
-}
-
-function formatDateTime(dateString) {
-    const date = new Date(dateString);
-    return date.toLocaleString('zh-CN', {
-        year: 'numeric', month: '2-digit', day: '2-digit',
-        hour: '2-digit', minute: '2-digit', hour12: false
-    });
-}
-
-// 显示提示消息
-function showAlert(message, type = 'info') {
-    // 简单提示实现
-    alert(message);
-}
-
-// 页面加载时获取数据
 document.addEventListener('DOMContentLoaded', loadStats);
 </script>
 {% endblock %}

@@ -99,6 +99,9 @@ function markPaperRead(paperId) {
         card.dataset.read = 'true';
         card.querySelector('.paper-title-link')?.classList.add('paper-title-read');
     }
+
+    // 上报服务端，用于"历史-最近点击"（失败不影响交互）
+    fetch(`/api/papers/${id}/read`, { method: 'POST' }).catch(() => {});
 }
 
 /**
@@ -156,113 +159,34 @@ function copyToClipboard(text, buttonElement) {
 }
 
 /**
- * 导出论文列表为 CSV
+ * 通过服务端接口导出论文并触发下载
+ * @param {string} format - 'csv' 或 'bibtex'
+ * @param {object} payload - 选择范围，如 {paper_ids: [...]} / {select_all: true, filters: {...}} / {favorites: true}
  */
-function exportToCSV() {
-    const papers = [];
-    $('.paper-card').each(function() {
-        const $card = $(this);
-        papers.push({
-            title: $card.find('.card-title').text().trim(),
-            authors: $card.find('.text-muted').text().replace(/^[^\u4e00-\u9fa5]*/, '').trim(),
-            source: $card.find('.badge').first().text().trim(),
-            year: $card.find('.badge.bg-info').text().trim(),
-            url: $card.find('a[href]').first().attr('href')
+async function downloadExport(format, payload) {
+    try {
+        const res = await fetch(`/api/export/${format}`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(payload)
         });
-    });
-
-    if (papers.length === 0) {
-        showToast('没有可导出的论文', 'warning');
-        return;
+        if (!res.ok) {
+            const d = await res.json().catch(() => ({}));
+            showToast(d.message || '导出失败', 'error');
+            return;
+        }
+        const blob = await res.blob();
+        const dateStr = new Date().toISOString().split('T')[0];
+        const ext = { csv: 'csv', bibtex: 'bib', xlsx: 'xlsx' }[format] || format;
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        link.download = `papers_${dateStr}.${ext}`;
+        link.click();
+        URL.revokeObjectURL(link.href);
+        showToast('导出成功', 'success');
+    } catch (err) {
+        showToast('导出失败: ' + err.message, 'error');
     }
-
-    // 生成 CSV 内容
-    const headers = ['Title', 'Authors', 'Source', 'Year', 'URL'];
-    const csvContent = [
-        headers.join(','),
-        ...papers.map(p => [
-            `"${p.title.replace(/"/g, '""')}"`,
-            `"${p.authors.replace(/"/g, '""')}"`,
-            p.source,
-            p.year,
-            p.url
-        ].join(','))
-    ].join('\n');
-
-    // 下载文件
-    const blob = new Blob(['\ufeff' + csvContent], { type: 'text/csv;charset=utf-8' });
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(blob);
-    link.download = `papers_${new Date().toISOString().split('T')[0]}.csv`;
-    link.click();
-
-    showToast('CSV 文件已下载', 'success');
-}
-
-/**
- * 导出论文列表为 BibTeX 格式
- */
-function exportToBibTeX() {
-    const papers = [];
-    $('.paper-card').each(function() {
-        const $card = $(this);
-        const title = $card.find('.card-title').text().trim();
-        const authors = $card.find('.text-muted').text().replace(/^[^\u4e00-\u9fa5]*/, '').trim();
-        const source = $card.find('.badge').first().text().trim();
-        const year = $card.find('.badge.bg-info').text().trim();
-        const venue = $card.find('.badge.bg-secondary').text().trim() || '';
-        const url = $card.find('a[href]').first().attr('href');
-
-        // 生成 BibTeX key (作者姓氏 + 年份 + 标题首词)
-        const firstAuthor = authors.split(',')[0].trim() || 'Unknown';
-        const yearNum = year || 'n.d.';
-        const titleWords = title.split(/\s+/);
-        const titleWord = titleWords[0] || 'Paper';
-        const bibKey = `${firstAuthor}${yearNum}${titleWord}`.replace(/[^a-zA-Z0-9]/g, '');
-
-        papers.push({
-            key: bibKey,
-            title: title,
-            authors: authors,
-            year: year,
-            venue: venue,
-            url: url,
-            source: source
-        });
-    });
-
-    if (papers.length === 0) {
-        showToast('没有可导出的论文', 'warning');
-        return;
-    }
-
-    // 生成 BibTeX 内容
-    let bibtexContent = '';
-    papers.forEach(p => {
-        const type = p.source === 'arxiv' ? 'article' : 'inproceedings';
-        bibtexContent += `@${type}{${p.key},\n`;
-        bibtexContent += `  title={${p.title}},\n`;
-        bibtexContent += `  author={${p.authors}},\n`;
-        if (p.year && p.year !== 'N/A') {
-            bibtexContent += `  year={${p.year}},\n`;
-        }
-        if (p.venue) {
-            bibtexContent += `  booktitle={${p.venue}},\n`;
-        }
-        if (p.url) {
-            bibtexContent += `  url={${p.url}},\n`;
-        }
-        bibtexContent += `}\n\n`;
-    });
-
-    // 下载文件
-    const blob = new Blob([bibtexContent], { type: 'text/plain;charset=utf-8' });
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(blob);
-    link.download = `papers_${new Date().toISOString().split('T')[0]}.bib`;
-    link.click();
-
-    showToast('BibTeX 文件已下载', 'success');
 }
 
 /**

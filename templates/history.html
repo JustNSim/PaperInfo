@@ -1,0 +1,162 @@
+{% extends "base.html" %}
+
+{% block title %}PaperInfo - 历史{% endblock %}
+
+{% macro score_badge(score) %}
+    {% if score is not none %}
+    <span class="paper-score-sm {% if score >= 70 %}score-high{% elif score >= 40 %}score-mid{% else %}score-low{% endif %}">{{ score }}</span>
+    {% else %}
+    <span class="text-muted">—</span>
+    {% endif %}
+{% endmacro %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h4 class="mb-0"><i class="bi bi-arrow-counterclockwise"></i> 历史</h4>
+        <small class="text-muted">各显示最近 50 条，列表内滚动</small>
+    </div>
+
+    <!-- 子导航 -->
+    <ul class="nav nav-pills mb-3" id="historyTabs">
+        <li class="nav-item">
+            <button class="nav-link active" data-target="reads" onclick="switchHistoryTab('reads')">
+                <i class="bi bi-hand-index"></i> 最近点击的论文
+            </button>
+        </li>
+        <li class="nav-item">
+            <button class="nav-link" data-target="fetched" onclick="switchHistoryTab('fetched')">
+                <i class="bi bi-cloud-download"></i> 最近抓取的论文
+            </button>
+        </li>
+    </ul>
+
+    <!-- 最近点击的论文（默认显示） -->
+    <div class="card" id="history-reads">
+        <div class="card-body p-0 history-scroll">
+            <table class="table table-hover mb-0">
+                <thead>
+                    <tr>
+                        <th style="width:45px">#</th>
+                        <th>标题</th>
+                        <th style="width:70px">来源</th>
+                        <th style="width:95px">发布日期</th>
+                        <th style="width:70px">相关度</th>
+                        <th style="width:70px">价值</th>
+                        <th style="width:55px">点击</th>
+                        <th style="width:115px">最近点击</th>
+                        <th style="width:125px">操作</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for read in recent_reads %}
+                    {% if read.paper %}
+                    <tr>
+                        <td class="text-muted">{{ loop.index }}</td>
+                        <td>
+                            <a href="{{ read.paper.url }}" target="_blank" class="text-decoration-none"
+                               title="{{ read.paper.title }}" onclick="markPaperRead({{ read.paper.id }})">
+                                {{ read.paper.title[:110] }}{% if read.paper.title|length > 110 %}...{% endif %}
+                            </a>
+                            {% if read.paper.domain %}
+                            {% set dc = domain_color(read.paper.domain.id) %}
+                            <span class="badge ms-1" style="background-color: {{ dc }}1a; color: {{ dc }};">{{ read.paper.domain.name }}</span>
+                            {% endif %}
+                        </td>
+                        <td><span class="badge bg-primary">{{ read.paper.source }}</span></td>
+                        <td><small class="text-muted">{{ read.paper.published_date.strftime('%Y-%m-%d') if read.paper.published_date else '—' }}</small></td>
+                        <td>{{ score_badge(read.paper.llm_score) }}</td>
+                        <td>{{ score_badge(read.paper.llm_value_score) }}</td>
+                        <td><span class="badge bg-secondary">{{ read.read_count }}</span></td>
+                        <td><small class="text-muted">{{ read.last_read_at.strftime('%m-%d %H:%M') if read.last_read_at else '—' }}</small></td>
+                        <td>
+                            {% if read.paper.url %}
+                            <a href="{{ read.paper.url }}" target="_blank" class="btn btn-sm btn-outline-primary" onclick="markPaperRead({{ read.paper.id }})">
+                                <i class="bi bi-link-45deg"></i> 原文
+                            </a>
+                            {% endif %}
+                            {% if read.paper.pdf_url %}
+                            <a href="{{ read.paper.pdf_url }}" target="_blank" class="btn btn-sm btn-outline-danger">
+                                <i class="bi bi-file-pdf"></i> PDF
+                            </a>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endif %}
+                    {% else %}
+                    <tr><td colspan="9" class="text-center text-muted py-4">还没有点击记录，去首页点几篇论文吧</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- 最近抓取的论文（默认隐藏） -->
+    <div class="card d-none" id="history-fetched">
+        <div class="card-body p-0 history-scroll">
+            <table class="table table-hover mb-0">
+                <thead>
+                    <tr>
+                        <th style="width:45px">#</th>
+                        <th>标题</th>
+                        <th style="width:70px">来源</th>
+                        <th style="width:95px">发布日期</th>
+                        <th style="width:70px">相关度</th>
+                        <th style="width:70px">价值</th>
+                        <th style="width:115px">收录时间</th>
+                        <th style="width:125px">操作</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for paper in recent_fetched %}
+                    <tr>
+                        <td class="text-muted">{{ loop.index }}</td>
+                        <td>
+                            <a href="{{ paper.url }}" target="_blank" class="text-decoration-none"
+                               title="{{ paper.title }}" onclick="markPaperRead({{ paper.id }})">
+                                {{ paper.title[:110] }}{% if paper.title|length > 110 %}...{% endif %}
+                            </a>
+                            {% if paper.domain %}
+                            {% set dc = domain_color(paper.domain.id) %}
+                            <span class="badge ms-1" style="background-color: {{ dc }}1a; color: {{ dc }};">{{ paper.domain.name }}</span>
+                            {% endif %}
+                        </td>
+                        <td><span class="badge bg-primary">{{ paper.source }}</span></td>
+                        <td><small class="text-muted">{{ paper.published_date.strftime('%Y-%m-%d') if paper.published_date else '—' }}</small></td>
+                        <td>{{ score_badge(paper.llm_score) }}</td>
+                        <td>{{ score_badge(paper.llm_value_score) }}</td>
+                        <td><small class="text-muted">{{ paper.fetched_date.strftime('%m-%d %H:%M') if paper.fetched_date else '—' }}</small></td>
+                        <td>
+                            {% if paper.url %}
+                            <a href="{{ paper.url }}" target="_blank" class="btn btn-sm btn-outline-primary" onclick="markPaperRead({{ paper.id }})">
+                                <i class="bi bi-link-45deg"></i> 原文
+                            </a>
+                            {% endif %}
+                            {% if paper.pdf_url %}
+                            <a href="{{ paper.pdf_url }}" target="_blank" class="btn btn-sm btn-outline-danger">
+                                <i class="bi bi-file-pdf"></i> PDF
+                            </a>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr><td colspan="8" class="text-center text-muted py-4">暂无论文</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function switchHistoryTab(target) {
+    document.querySelectorAll('#historyTabs .nav-link').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.target === target);
+    });
+    document.getElementById('history-reads').classList.toggle('d-none', target !== 'reads');
+    document.getElementById('history-fetched').classList.toggle('d-none', target !== 'fetched');
+}
+</script>
+{% endblock %}

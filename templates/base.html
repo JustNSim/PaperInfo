@@ -15,9 +15,9 @@
     {% block head %}{% endblock %}
 </head>
 <body>
-    <!-- 导航栏 -->
-    <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
-        <div class="container-fluid">
+    <!-- 顶栏 -->
+    <nav class="navbar navbar-expand-lg sticky-top">
+        <div class="container-fluid px-3">
             <a class="navbar-brand" href="/">
                 <i class="bi bi-journal-text"></i> PaperInfo
             </a>
@@ -25,53 +25,59 @@
                 <span class="navbar-toggler-icon"></span>
             </button>
             <div class="collapse navbar-collapse" id="navbarNav">
-                <ul class="navbar-nav me-auto">
+                <ul class="navbar-nav me-2">
                     <li class="nav-item">
-                        <a class="nav-link" href="/"><i class="bi bi-house"></i> 首页</a>
+                        <a class="nav-link {% if request.endpoint == 'index' %}active{% endif %}" href="/"><i class="bi bi-house"></i>首页</a>
                     </li>
                     <li class="nav-item">
-                        <a class="nav-link" href="/favorites"><i class="bi bi-star-fill"></i> 收藏</a>
+                        <a class="nav-link {% if request.endpoint == 'favorites' %}active{% endif %}" href="/favorites"><i class="bi bi-star"></i>收藏</a>
                     </li>
                     <li class="nav-item">
-                        <a class="nav-link" href="/update-logs"><i class="bi bi-clock-history"></i> 更新日志</a>
+                        <a class="nav-link {% if request.endpoint == 'history' %}active{% endif %}" href="/history"><i class="bi bi-arrow-counterclockwise"></i>历史</a>
                     </li>
                     <li class="nav-item">
-                        <a class="nav-link" href="/stats"><i class="bi bi-graph-up"></i> 统计</a>
+                        <a class="nav-link {% if request.endpoint == 'update_logs' %}active{% endif %}" href="/update-logs"><i class="bi bi-clock-history"></i>日志</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link {% if request.endpoint == 'stats' %}active{% endif %}" href="/stats"><i class="bi bi-graph-up"></i>统计</a>
                     </li>
                 </ul>
-                <form class="d-flex position-relative" role="search" method="GET" action="/" id="searchForm">
+                <form class="d-flex position-relative mx-lg-auto" role="search" method="GET" action="/" id="searchForm">
                     <div class="dropdown w-100 me-2">
                         <input class="form-control dropdown-toggle" type="search" name="q" id="searchInput"
-                               placeholder="搜索论文..." value="{{ request.args.get('q', '') }}"
+                               placeholder="搜索论文标题、摘要、会议..." value="{{ request.args.get('q', '') }}"
                                data-bs-toggle="dropdown" data-bs-auto-close="outside" autocomplete="off">
                         <ul class="dropdown-menu w-100" id="searchHistory" style="max-height: 300px; overflow-y: auto;">
                             <li><h6 class="dropdown-header">搜索历史 <span id="clearHistory" style="cursor:pointer;float:right;" title="清空历史"><i class="bi bi-x-circle"></i></span></h6></li>
                             <li><hr class="dropdown-divider"></li>
                         </ul>
                     </div>
-                    <button class="btn btn-outline-light" type="submit">搜索</button>
+                    <button class="btn btn-outline-secondary" type="submit"><i class="bi bi-search"></i></button>
                 </form>
+                <div class="d-flex align-items-center gap-2 ms-lg-3 mt-2 mt-lg-0">
+                    {% block nav_actions %}{% endblock %}
+                </div>
             </div>
         </div>
     </nav>
 
     <!-- 主内容区域 -->
-    <main class="container-fluid py-4">
+    <main class="container-fluid px-3 py-3">
         {% block content %}{% endblock %}
     </main>
 
     <!-- 页脚 -->
-    <footer class="bg-light text-center py-3 mt-auto">
-        <div class="container">
-            <p class="text-muted mb-0">
-                <small>
-                    PaperInfo - 论文调研工具 |
-                    <a href="https://arxiv.org" target="_blank">arXiv</a> |
-                    <a href="https://dblp.org" target="_blank">DBLP</a>
-                </small>
-            </p>
-        </div>
+    <footer class="text-center py-2 mt-auto">
+        <small class="text-muted">
+            PaperInfo ·
+            <a href="https://arxiv.org" target="_blank">arXiv</a> ·
+            <a href="https://dblp.org" target="_blank">DBLP</a> ·
+            <a href="https://www.semanticscholar.org" target="_blank">Semantic Scholar</a>
+        </small>
     </footer>
+
+    <!-- Toast 容器 -->
+    <div id="toast-container" aria-live="polite"></div>
 
     <!-- Bootstrap 5 JS -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>

@@ -3,22 +3,24 @@
 {% block title %}PaperInfo - 我的收藏{% endblock %}
 
 {% block content %}
-<div class="container-fluid py-4">
-    <div class="d-flex justify-content-between align-items-center mb-4">
-        <h2>
+<div class="container-fluid">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h4 class="mb-0">
             <i class="bi bi-star-fill text-warning"></i> 我的收藏
             <span class="badge bg-warning text-dark ms-2">{{ total }}</span>
-        </h2>
-        <a href="/" class="btn btn-outline-primary">
-            <i class="bi bi-arrow-left"></i> 返回论文列表
-        </a>
-        <div class="btn-group btn-group-sm">
-            <button class="btn btn-outline-success" onclick="exportToBibTeX()" title="导出为 BibTeX 格式">
-                <i class="bi bi-file-earmark-code"></i> BibTeX
-            </button>
-            <button class="btn btn-outline-primary" onclick="exportToCSV()" title="导出为 CSV 格式">
-                <i class="bi bi-filetype-csv"></i> CSV
-            </button>
+        </h4>
+        <div class="d-flex align-items-center gap-2">
+            <div class="btn-group btn-group-sm">
+                <button class="btn btn-outline-success" onclick="exportFavorites('bibtex')" title="导出全部收藏为 BibTeX 格式">
+                    <i class="bi bi-file-earmark-code"></i> BibTeX
+                </button>
+                <button class="btn btn-outline-primary" onclick="exportFavorites('csv')" title="导出全部收藏为 CSV 格式">
+                    <i class="bi bi-filetype-csv"></i> CSV
+                </button>
+            </div>
+            <a href="/" class="btn btn-sm btn-outline-secondary">
+                <i class="bi bi-arrow-left"></i> 返回论文列表
+            </a>
         </div>
     </div>
 
@@ -56,89 +58,107 @@
     <!-- 论文列表 -->
     <div id="paperList">
         {% for paper in papers %}
-        <div class="card mb-3 paper-card" data-id="{{ paper.id }}" data-favorite="true">
-            <div class="card-body">
-                <!-- 顶部：复选框 + 收藏状态 -->
-                <div class="d-flex justify-content-between align-items-start mb-2">
-                    <div class="form-check">
-                        <input class="form-check-input paper-checkbox-fav" type="checkbox"
-                               value="{{ paper.id }}" onchange="updateSelectedCountFav()">
-                        <label class="form-check-label"></label>
-                    </div>
-                    <span class="badge bg-warning text-dark">
-                        <i class="bi bi-star-fill"></i> 已收藏
-                    </span>
-                </div>
-
-                <!-- 标题和来源 -->
-                <h5 class="card-title d-flex align-items-start gap-2">
-                    <a href="{{ paper.url }}" target="_blank" class="text-decoration-none flex-grow-1 paper-title-link"
-                       id="title-{{ paper.id }}" onclick="markPaperRead({{ paper.id }})">{{ paper.title }}</a>
-                    <button class="btn btn-sm btn-link p-0 text-primary" onclick="markPaperRead({{ paper.id }}); translateTitle({{ paper.id }})" title="翻译标题">
-                        <i class="bi bi-translate"></i>
-                    </button>
-                </h5>
-
-                <!-- 元信息 -->
-                <div class="mb-2">
-                    <span class="badge bg-primary">{{ paper.source }}</span>
-                    {% if paper.venue %}
-                    <span class="badge bg-secondary">{{ paper.venue }}</span>
-                    {% endif %}
-                    {% if paper.year %}
-                    <span class="badge bg-info text-dark">{{ paper.year }}</span>
-                    {% endif %}
+        <div class="card mb-2 paper-card" data-id="{{ paper.id }}" data-favorite="true">
+            <div class="card-body d-flex gap-3 py-3">
+                <!-- 评分块 -->
+                {% if paper.llm_score is not none or paper.llm_value_score is not none %}
+                <div class="paper-score-stack">
                     {% if paper.llm_score is not none %}
-                    <span class="badge bg-success" title="LLM相关度评分">
-                        <i class="bi bi-bar-chart-fill"></i> {{ paper.llm_score }}/100
-                    </span>
-                    {% endif %}
-                </div>
-
-                <!-- 作者 -->
-                <p class="card-text text-muted mb-2">
-                    <small><i class="bi bi-people"></i> {{ paper.authors|join(', ') }}</small>
-                </p>
-
-                <!-- 摘要 -->
-                {% if paper.abstract %}
-                <div class="d-flex align-items-start gap-2">
-                    <div class="flex-grow-1">
-                        <p class="card-text abstract-text mb-0" id="abstract-{{ paper.id }}">
-                            <small>{{ paper.abstract[:300] }}{% if paper.abstract|length > 300 %}...{% endif %}</small>
-                        </p>
+                    <div class="paper-score {% if paper.llm_score >= 70 %}score-high{% elif paper.llm_score >= 40 %}score-mid{% else %}score-low{% endif %}" title="LLM相关度评分">
+                        <span class="score-num">{{ paper.llm_score }}</span>
+                        <span class="score-label">相关度</span>
                     </div>
-                    <button class="btn btn-sm btn-link p-0 text-primary flex-shrink-0" onclick="markPaperRead({{ paper.id }}); translateAbstract({{ paper.id }})" title="翻译摘要">
-                        <i class="bi bi-translate"></i>
-                    </button>
+                    {% endif %}
+                    {% if paper.llm_value_score is not none %}
+                    <div class="paper-score {% if paper.llm_value_score >= 70 %}score-high{% elif paper.llm_value_score >= 40 %}score-mid{% else %}score-low{% endif %}" title="LLM价值评分">
+                        <span class="score-num">{{ paper.llm_value_score }}</span>
+                        <span class="score-label">价值</span>
+                    </div>
+                    {% endif %}
                 </div>
-                {% if paper.abstract|length > 300 %}
-                <button class="btn btn-sm btn-link p-0" onclick="markPaperRead({{ paper.id }}); toggleAbstract({{ paper.id }})">
-                    <span id="abstract-toggle-{{ paper.id }}">展开全文</span>
-                </button>
-                {% endif %}
                 {% endif %}
 
-                <!-- 操作按钮 -->
-                <div class="mt-2">
-                    {% if paper.url %}
-                    <a href="{{ paper.url }}" target="_blank" class="btn btn-sm btn-outline-primary" onclick="markPaperRead({{ paper.id }})">
-                        <i class="bi bi-link-45deg"></i> 原文链接
-                    </a>
-                    {% endif %}
-                    {% if paper.pdf_url %}
-                    <a href="{{ paper.pdf_url }}" target="_blank" class="btn btn-sm btn-outline-danger" onclick="markPaperRead({{ paper.id }})">
-                        <i class="bi bi-file-pdf"></i> PDF
-                    </a>
-                    {% endif %}
-                    <button class="btn btn-sm btn-outline-secondary" onclick="singleUnfavorite({{ paper.id }})">
-                        <i class="bi bi-star"></i> 取消收藏
+                <!-- 主体 -->
+                <div class="flex-grow-1" style="min-width:0">
+                    <!-- 标题行 -->
+                    <div class="d-flex justify-content-between align-items-start mb-1">
+                        <div class="d-flex align-items-start gap-2 flex-grow-1" style="min-width:0">
+                            <div class="form-check mb-0 mt-1 flex-shrink-0">
+                                <input class="form-check-input paper-checkbox-fav" type="checkbox"
+                                       value="{{ paper.id }}" onchange="updateSelectedCountFav()">
+                                <label class="form-check-label"></label>
+                            </div>
+                            <h5 class="card-title">
+                                <a href="{{ paper.url }}" target="_blank" class="text-decoration-none paper-title-link"
+                                   id="title-{{ paper.id }}" onclick="markPaperRead({{ paper.id }})">{{ paper.title }}</a>
+                            </h5>
+                        </div>
+                        <div class="d-flex align-items-center gap-1 flex-shrink-0 ms-2">
+                            <span class="badge bg-warning text-dark">
+                                <i class="bi bi-star-fill"></i> 已收藏
+                            </span>
+                            <button class="btn btn-sm btn-link p-0" onclick="markPaperRead({{ paper.id }}); translateTitle({{ paper.id }})" title="翻译标题">
+                                <i class="bi bi-translate"></i>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- 元信息 -->
+                    <div class="paper-meta">
+                        <span class="badge bg-primary">{{ paper.source }}</span>
+                        {% if paper.venue %}
+                        <span class="badge bg-secondary">{{ paper.venue }}</span>
+                        {% endif %}
+                        {% if paper.year %}
+                        <span class="badge bg-info">{{ paper.year }}</span>
+                        {% endif %}
+                        <small class="text-muted ms-1">
+                            发布 {{ paper.published_date.strftime('%Y-%m-%d') if paper.published_date else 'N/A' }}
+                            <span class="mx-1">·</span>
+                            收录 {{ paper.fetched_date.strftime('%m-%d %H:%M') if paper.fetched_date else 'N/A' }}
+                        </small>
+                    </div>
+
+                    <!-- 作者 -->
+                    <p class="paper-authors mb-1" title="{{ paper.authors|join(', ') }}">
+                        <i class="bi bi-people"></i> {{ paper.authors|join(', ') }}
+                    </p>
+
+                    <!-- 摘要 -->
+                    {% if paper.abstract %}
+                    <div class="d-flex align-items-start gap-2 mt-1">
+                        <div class="flex-grow-1" style="min-width:0">
+                            <p class="card-text abstract-text mb-0" id="abstract-{{ paper.id }}">
+                                <small>{{ paper.abstract[:300] }}{% if paper.abstract|length > 300 %}...{% endif %}</small>
+                            </p>
+                        </div>
+                        <button class="btn btn-sm btn-link p-0 flex-shrink-0" onclick="markPaperRead({{ paper.id }}); translateAbstract({{ paper.id }})" title="翻译摘要">
+                            <i class="bi bi-translate"></i>
+                        </button>
+                    </div>
+                    {% if paper.abstract|length > 300 %}
+                    <button class="btn btn-sm btn-link p-0" onclick="markPaperRead({{ paper.id }}); toggleAbstract({{ paper.id }})">
+                        <span id="abstract-toggle-{{ paper.id }}">展开全文</span>
                     </button>
-                    <small class="text-muted ms-3">
-                        发布于: {{ paper.published_date.strftime('%Y-%m-%d') if paper.published_date else 'N/A' }}
-                        <span class="mx-1">·</span>
-                        添加于: {{ paper.fetched_date.strftime('%Y-%m-%d %H:%M') if paper.fetched_date else 'N/A' }}
-                    </small>
+                    {% endif %}
+                    {% endif %}
+
+                    <!-- 操作按钮 -->
+                    <div class="mt-2 d-flex align-items-center gap-2">
+                        {% if paper.url %}
+                        <a href="{{ paper.url }}" target="_blank" class="btn btn-sm btn-outline-primary" onclick="markPaperRead({{ paper.id }})">
+                            <i class="bi bi-link-45deg"></i> 原文
+                        </a>
+                        {% endif %}
+                        {% if paper.pdf_url %}
+                        <a href="{{ paper.pdf_url }}" target="_blank" class="btn btn-sm btn-outline-danger" onclick="markPaperRead({{ paper.id }})">
+                            <i class="bi bi-file-pdf"></i> PDF
+                        </a>
+                        {% endif %}
+                        <button class="btn btn-sm btn-outline-secondary" onclick="singleUnfavorite({{ paper.id }})">
+                            <i class="bi bi-star"></i> 取消收藏
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>
@@ -187,6 +207,11 @@
 
 {% block scripts %}
 <script>
+// 导出全部收藏（服务端生成，数据完整）
+async function exportFavorites(format) {
+    await downloadExport(format, { favorites: true });
+}
+
 // 从主页复用的数据
 const abstracts = {
     {% for paper in papers %}

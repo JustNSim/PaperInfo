@@ -2,28 +2,40 @@
 
 {% block title %}PaperInfo - 论文列表{% endblock %}
 
+{% block nav_actions %}
+<button class="btn btn-primary btn-sm" onclick="triggerFetch(false)" id="fetchBtn">
+    <i class="bi bi-cloud-download"></i> 立即更新
+</button>
+<div class="dropdown">
+    <button class="btn btn-outline-secondary btn-sm" data-bs-toggle="dropdown" aria-expanded="false" title="更多操作">
+        <i class="bi bi-three-dots"></i>
+    </button>
+    <ul class="dropdown-menu dropdown-menu-end">
+        <li><button class="dropdown-item" onclick="triggerFetch(true)" id="fetchAllBtn"><i class="bi bi-cloud-download-fill"></i> 更新全部领域</button></li>
+        <li><button class="dropdown-item" onclick="showStats()"><i class="bi bi-speedometer2"></i> 数据速览</button></li>
+        <li><hr class="dropdown-divider"></li>
+        <li><button class="dropdown-item text-danger" onclick="confirmClearData()" id="clearBtn"><i class="bi bi-trash3"></i> 清空数据</button></li>
+    </ul>
+</div>
+{% endblock %}
+
 {% block content %}
 <div class="row g-3">
-    <!-- 侧边栏过滤器 -->
-    <div class="col-lg-3">
-        <div class="card">
-            <div class="card-header bg-white">
-                <h6 class="mb-0"><i class="bi bi-funnel"></i> 筛选</h6>
+    <!-- 侧边栏 -->
+    <div class="col-lg-3 col-xl-2">
+        <div class="sidebar-sticky">
+        <div class="card mb-3">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span><i class="bi bi-funnel"></i> 筛选</span>
+                <div class="btn-group btn-group-sm">
+                    <button class="btn btn-outline-secondary" onclick="addNewDomain()" title="新增领域"><i class="bi bi-plus-lg"></i></button>
+                    <button class="btn btn-outline-secondary" onclick="editSelectedDomain()" id="editDomainBtn" title="编辑领域配置"><i class="bi bi-gear"></i></button>
+                </div>
             </div>
             <div class="card-body">
                 <!-- 领域选择 -->
                 <div class="mb-3">
-                    <div class="d-flex justify-content-between align-items-center mb-2">
-                        <label class="form-label fw-bold mb-0">研究领域</label>
-                        <div class="btn-group btn-group-sm">
-                            <button class="btn btn-outline-success" onclick="addNewDomain()" title="新增领域">
-                                <i class="bi bi-plus-lg"></i> 新增
-                            </button>
-                            <button class="btn btn-outline-primary" onclick="editSelectedDomain()" id="editDomainBtn" title="编辑领域配置">
-                                <i class="bi bi-gear"></i> 编辑
-                            </button>
-                        </div>
-                    </div>
+                    <label class="form-label fw-bold mb-1 d-block">研究领域</label>
                     <select class="form-select" id="domainFilter" name="domain" onchange="updateEditDomainButton()">
                         <option value="">全部领域</option>
                         {% for domain in domains %}
@@ -62,6 +74,18 @@
                     </select>
                 </div>
 
+                <!-- 时间筛选（按发布日期） -->
+                <div class="mb-3">
+                    <label class="form-label fw-bold">时间</label>
+                    <select class="form-select" id="daysFilter" name="days">
+                        <option value="">全部时间</option>
+                        <option value="7" {% if days == 7 %}selected{% endif %}>最近 7 天</option>
+                        <option value="30" {% if days == 30 %}selected{% endif %}>最近 30 天</option>
+                        <option value="90" {% if days == 90 %}selected{% endif %}>最近 90 天</option>
+                        <option value="365" {% if days == 365 %}selected{% endif %}>最近一年</option>
+                    </select>
+                </div>
+
                 <!-- 更新事件筛选 -->
                 {% if update_logs %}
                 <div class="mb-3">
@@ -83,83 +107,59 @@
             </div>
         </div>
 
-        <!-- 操作面板 -->
+        <!-- 领域管理 -->
         <div class="card">
-            <div class="card-header bg-white">
-                <h6 class="mb-0"><i class="bi bi-gear"></i> 操作</h6>
-            </div>
-            <div class="card-body">
-                <!-- 领域管理 -->
-                <div class="mb-3">
-                    <div class="d-flex justify-content-between align-items-center mb-2">
-                        <span class="fw-bold small"><i class="bi bi-collection"></i> 领域管理</span>
-                    </div>
-                    <div class="list-group list-group-flush">
-                        {% for d in all_domains %}
-                        <div class="list-group-item px-0 py-2 border-0 d-flex align-items-center justify-content-between" id="domain-row-{{ d.id }}">
-                            <div class="d-flex align-items-center flex-grow-1 me-2" style="min-width:0">
-                                <div class="form-check form-switch me-2 mb-0">
-                                    <input class="form-check-input" type="checkbox" role="switch"
-                                           id="domain-switch-{{ d.id }}"
-                                           {% if d.enabled %}checked{% endif %}
-                                           onchange="toggleDomainEnabled({{ d.id }}, this.checked)"
-                                           style="cursor:pointer">
-                                </div>
-                                <span class="small text-truncate {% if not d.enabled %}text-muted{% endif %}"
-                                      id="domain-name-{{ d.id }}" title="{{ d.name }}">
-                                    {{ d.name }}
-                                </span>
+            <div class="card-header"><i class="bi bi-collection"></i> 领域管理</div>
+            <div class="card-body pt-2 pb-2">
+                <div class="list-group list-group-flush">
+                    {% for d in all_domains %}
+                    <div class="list-group-item domain-row d-flex align-items-center justify-content-between" id="domain-row-{{ d.id }}">
+                        <div class="d-flex align-items-center flex-grow-1 me-2" style="min-width:0">
+                            <div class="form-check form-switch me-2 mb-0">
+                                <input class="form-check-input" type="checkbox" role="switch"
+                                       id="domain-switch-{{ d.id }}"
+                                       {% if d.enabled %}checked{% endif %}
+                                       onchange="toggleDomainEnabled({{ d.id }}, this.checked)"
+                                       style="cursor:pointer">
                             </div>
-                            <div class="d-flex align-items-center flex-shrink-0">
-                                <span class="badge bg-secondary me-1" id="domain-count-{{ d.id }}"
-                                      title="论文数">{{ domain_paper_counts.get(d.id, 0) }}</span>
-                                <small class="text-muted" id="domain-time-{{ d.id }}" style="font-size:0.7rem">
-                                    {% if domain_last_updates.get(d.id) %}
-                                    {{ domain_last_updates[d.id].strftime('%m-%d %H:%M') }}
-                                    {% else %}
-                                    —
-                                    {% endif %}
-                                </small>
-                            </div>
+                            <span class="small text-truncate {% if not d.enabled %}text-muted{% endif %}"
+                                  id="domain-name-{{ d.id }}" title="{{ d.name }}">
+                                {{ d.name }}
+                            </span>
                         </div>
-                        {% endfor %}
+                        <div class="d-flex align-items-center flex-shrink-0">
+                            <button class="btn btn-sm btn-link p-0 me-1 text-muted" onclick="triggerFetch(false, {{ d.id }})"
+                                    title="立即更新该领域">
+                                <i class="bi bi-arrow-repeat"></i>
+                            </button>
+                            <span class="badge bg-secondary me-1" id="domain-count-{{ d.id }}"
+                                  title="论文数">{{ domain_paper_counts.get(d.id, 0) }}</span>
+                            <small class="text-muted" id="domain-time-{{ d.id }}" style="font-size:0.7rem">
+                                {% if domain_last_updates.get(d.id) %}
+                                {{ domain_last_updates[d.id].strftime('%m-%d %H:%M') }}
+                                {% else %}
+                                —
+                                {% endif %}
+                            </small>
+                        </div>
                     </div>
+                    {% endfor %}
                 </div>
-                <hr class="my-2">
-                <button class="btn btn-info w-100 mb-2" onclick="showStats()">
-                    <i class="bi bi-bar-chart"></i> 查看统计
-                </button>
-                <hr>
-                <button class="btn btn-success w-100 mb-2" onclick="triggerFetch(false)" id="fetchBtn">
-                    <i class="bi bi-cloud-download"></i> 立即更新
-                </button>
-                <button class="btn btn-outline-success w-100 mb-2" onclick="triggerFetch(true)" id="fetchAllBtn">
-                    <i class="bi bi-cloud-download-fill"></i> 更新全部领域
-                </button>
-                <hr>
-                <button class="btn btn-danger w-100" onclick="confirmClearData()" id="clearBtn">
-                    <i class="bi bi-trash3"></i> 清空数据
-                </button>
-                <p class="text-muted small mt-2 mb-0">
-                    <i class="bi bi-exclamation-triangle text-warning"></i>
-                    <strong>警告：</strong>清空操作不可恢复！将删除所有已抓取的论文数据。
-                </p>
-                <small class="text-muted d-block text-center mt-2">
-                    上次更新完成: {{ last_update or '未知' }}
-                </small>
-                {% if next_run %}
-                <small class="text-muted d-block text-center">
-                    下次定时更新: {{ next_run }}
-                </small>
-                {% endif %}
+                <div class="text-muted small mt-2 pt-2 border-top" style="font-size:0.75rem">
+                    <div><i class="bi bi-clock"></i> 上次更新: {{ last_update or '—' }}</div>
+                    {% if next_run %}
+                    <div><i class="bi bi-calendar-event"></i> 下次定时: {{ next_run }}</div>
+                    {% endif %}
+                </div>
             </div>
         </div>
+        </div><!-- /sidebar-sticky -->
     </div>
 
     <!-- 论文列表 -->
-    <div class="col-lg-9">
+    <div class="col-lg-9 col-xl-10">
         <!-- 统计信息和批量操作 -->
-        <div class="alert alert-info">
+        <div class="alert alert-info list-toolbar">
             <div class="d-flex justify-content-between align-items-center mb-2">
                 <span>
                     <i class="bi bi-info-circle"></i>
@@ -169,12 +169,6 @@
                     {% endif %}
                 </span>
                 <div class="btn-group btn-group-sm">
-                    <button class="btn btn-outline-primary" type="button"
-                            data-bs-toggle="collapse" data-bs-target="#paperQuickFilters"
-                            aria-expanded="{% if days or domain_id or sources %}true{% else %}false{% endif %}"
-                            aria-controls="paperQuickFilters" title="按时间、领域、来源筛选">
-                        <i class="bi bi-funnel"></i> 筛选
-                    </button>
                     <a href="?{% if request.args %}{% for k, v in request.args.items() %}{% if k != 'sort' %}{{ k }}={{ v }}&{% endif %}{% endfor %}{% endif %}sort=date" class="btn btn-outline-secondary">
                         <i class="bi bi-calendar3"></i> 日期
                     </a>
@@ -190,52 +184,6 @@
                     <a href="?{% if request.args %}{% for k, v in request.args.items() %}{% if k != 'sort' %}{{ k }}={{ v }}&{% endif %}{% endfor %}{% endif %}sort=value_asc" class="btn btn-outline-info">
                         <i class="bi bi-sort-numeric-up"></i> 价值&#8593;
                     </a>
-                    <button class="btn btn-outline-success" onclick="exportToBibTeX()" title="导出为 BibTeX 格式">
-                        <i class="bi bi-file-earmark-code"></i> BibTeX
-                    </button>
-                    <button class="btn btn-outline-primary" onclick="exportToCSV()" title="导出为 CSV 格式">
-                        <i class="bi bi-filetype-csv"></i> CSV
-                    </button>
-                </div>
-            </div>
-            <div class="collapse {% if days or domain_id or sources %}show{% endif %}" id="paperQuickFilters">
-                <div class="paper-quick-filter-panel border-top pt-3 mt-2">
-                    <div class="row g-2 align-items-end">
-                        <div class="col-md-3">
-                            <label for="quickTimeFilter" class="form-label small fw-bold mb-1">时间</label>
-                            <select class="form-select form-select-sm" id="quickTimeFilter">
-                                <option value="">全部时间</option>
-                                <option value="7" {% if days == 7 %}selected{% endif %}>最近 7 天</option>
-                                <option value="30" {% if days == 30 %}selected{% endif %}>最近 30 天</option>
-                                <option value="90" {% if days == 90 %}selected{% endif %}>最近 90 天</option>
-                                <option value="365" {% if days == 365 %}selected{% endif %}>最近一年</option>
-                            </select>
-                        </div>
-                        <div class="col-md-3">
-                            <label for="quickDomainFilter" class="form-label small fw-bold mb-1">领域</label>
-                            <select class="form-select form-select-sm" id="quickDomainFilter">
-                                <option value="">全部领域</option>
-                                {% for domain in domains %}
-                                <option value="{{ domain.id }}" {% if domain_id == domain.id %}selected{% endif %}>{{ domain.name }}</option>
-                                {% endfor %}
-                            </select>
-                        </div>
-                        <div class="col-md-3">
-                            <label for="quickSourceFilter" class="form-label small fw-bold mb-1">来源</label>
-                            <select class="form-select form-select-sm" id="quickSourceFilter">
-                                <option value="">全部来源</option>
-                                <option value="arxiv" {% if sources|length == 1 and 'arxiv' in sources %}selected{% endif %}>arXiv</option>
-                                <option value="dblp" {% if sources|length == 1 and 'dblp' in sources %}selected{% endif %}>DBLP</option>
-                                <option value="s2" {% if sources|length == 1 and 's2' in sources %}selected{% endif %}>Semantic Scholar</option>
-                            </select>
-                        </div>
-                        <div class="col-md-3 d-flex gap-2">
-                            <button class="btn btn-sm btn-primary flex-grow-1" onclick="applyPaperQuickFilters()">
-                                <i class="bi bi-check-circle"></i> 应用
-                            </button>
-                            <button class="btn btn-sm btn-outline-secondary" onclick="resetPaperQuickFilters()">重置</button>
-                        </div>
-                    </div>
                 </div>
             </div>
             <!-- 批量操作栏 -->
@@ -245,6 +193,12 @@
                         <input class="form-check-input" type="checkbox" id="selectAll" onchange="toggleSelectAll()">
                         <label class="form-check-label ms-2" for="selectAll">
                             全选当前页
+                        </label>
+                    </div>
+                    <div class="form-check mb-0">
+                        <input class="form-check-input" type="checkbox" id="selectAllPapers" onchange="toggleSelectAllPapers()">
+                        <label class="form-check-label ms-2" for="selectAllPapers" title="选中当前筛选条件下的全部论文（跨页）">
+                            跨页全选
                         </label>
                     </div>
                     <small class="text-muted">
@@ -258,6 +212,18 @@
                     <button class="btn btn-outline-secondary" onclick="batchUnfavorite()" id="batchUnfavBtn" disabled>
                         <i class="bi bi-star-fill"></i> 取消收藏
                     </button>
+                    <button class="btn btn-outline-success" onclick="exportSelected('bibtex')" id="batchBibtexBtn" disabled title="导出选中论文为 BibTeX">
+                        <i class="bi bi-file-earmark-code"></i> BibTeX
+                    </button>
+                    <div class="btn-group btn-group-sm" role="group">
+                        <button class="btn btn-outline-primary dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false" id="batchExportBtn" disabled title="导出选中论文">
+                            <i class="bi bi-download"></i> 导出
+                        </button>
+                        <ul class="dropdown-menu">
+                            <li><button class="dropdown-item" onclick="exportSelected('xlsx')"><i class="bi bi-file-excel"></i> Excel (.xlsx)</button></li>
+                            <li><button class="dropdown-item" onclick="exportSelected('csv')"><i class="bi bi-filetype-csv"></i> CSV (.csv)</button></li>
+                        </ul>
+                    </div>
                     <button class="btn btn-outline-danger" onclick="confirmBatchDelete()" id="batchDeleteBtn" disabled>
                         <i class="bi bi-trash3"></i> 删除
                     </button>
@@ -280,36 +246,58 @@
         <!-- 论文卡片列表 -->
         <div id="paperList">
             {% for paper in papers %}
-            <div class="card mb-4 paper-card" data-id="{{ paper.id }}" data-favorite="{{ paper.is_favorite }}">
-                <div class="card-body">
-                    <!-- 顶部：复选框 + 收藏状态 -->
-                    <div class="d-flex justify-content-between align-items-start mb-2">
-                        <div class="form-check">
-                            <input class="form-check-input paper-checkbox" type="checkbox"
-                                   value="{{ paper.id }}" onchange="updateSelectedCount()">
-                            <label class="form-check-label"></label>
+            <div class="card mb-2 paper-card" data-id="{{ paper.id }}" data-favorite="{{ paper.is_favorite }}">
+                <div class="card-body d-flex gap-3 py-3">
+                    <!-- 评分块 -->
+                    {% if paper.llm_score is not none or paper.llm_value_score is not none %}
+                    <div class="paper-score-stack">
+                        {% if paper.llm_score is not none %}
+                        <div class="paper-score {% if paper.llm_score >= 70 %}score-high{% elif paper.llm_score >= 40 %}score-mid{% else %}score-low{% endif %}" title="LLM相关度评分">
+                            <span class="score-num">{{ paper.llm_score }}</span>
+                            <span class="score-label">相关度</span>
                         </div>
-                        {% if paper.is_favorite %}
-                        <span class="badge bg-warning text-dark">
-                            <i class="bi bi-star-fill"></i> 已收藏
-                        </span>
+                        {% endif %}
+                        {% if paper.llm_value_score is not none %}
+                        <div class="paper-score {% if paper.llm_value_score >= 70 %}score-high{% elif paper.llm_value_score >= 40 %}score-mid{% else %}score-low{% endif %}" title="LLM价值评分">
+                            <span class="score-num">{{ paper.llm_value_score }}</span>
+                            <span class="score-label">价值</span>
+                        </div>
                         {% endif %}
                     </div>
+                    {% endif %}
 
-                    <!-- 标题和来源 -->
-                    <h5 class="card-title d-flex align-items-start gap-2">
-                        <a href="{{ paper.url }}" target="_blank" class="text-decoration-none flex-grow-1 paper-title-link"
-                           id="title-{{ paper.id }}" onclick="markPaperRead({{ paper.id }})">{{ paper.title }}</a>
-                        <button class="btn btn-sm btn-link p-0 text-primary" onclick="markPaperRead({{ paper.id }}); translateTitle({{ paper.id }})" title="翻译标题">
-                            <i class="bi bi-translate"></i>
-                        </button>
-                    </h5>
+                    <!-- 主体 -->
+                    <div class="flex-grow-1" style="min-width:0">
+                        <!-- 标题行（JS 批量收藏会向本行追加"已收藏"徽章，结构勿改） -->
+                        <div class="d-flex justify-content-between align-items-start mb-1">
+                            <div class="d-flex align-items-start gap-2 flex-grow-1" style="min-width:0">
+                                <div class="form-check mb-0 mt-1 flex-shrink-0">
+                                    <input class="form-check-input paper-checkbox" type="checkbox"
+                                           value="{{ paper.id }}" onchange="updateSelectedCount()">
+                                    <label class="form-check-label"></label>
+                                </div>
+                                <h5 class="card-title">
+                                    <a href="{{ paper.url }}" target="_blank" class="text-decoration-none paper-title-link"
+                                       id="title-{{ paper.id }}" onclick="markPaperRead({{ paper.id }})">{{ paper.title }}</a>
+                                </h5>
+                            </div>
+                            <div class="d-flex align-items-center gap-1 flex-shrink-0 ms-2">
+                                {% if paper.is_favorite %}
+                                <span class="badge bg-warning text-dark">
+                                    <i class="bi bi-star-fill"></i> 已收藏
+                                </span>
+                                {% endif %}
+                                <button class="btn btn-sm btn-link p-0" onclick="markPaperRead({{ paper.id }}); translateTitle({{ paper.id }})" title="翻译标题">
+                                    <i class="bi bi-translate"></i>
+                                </button>
+                            </div>
+                        </div>
 
-                    <!-- 元信息 -->
-                    <div class="mb-3">
-                        <div class="d-flex flex-wrap align-items-center gap-1 mb-2">
+                        <!-- 元信息 -->
+                        <div class="paper-meta">
                             {% if paper.domain %}
-                            <span class="badge bg-dark" title="所属领域">
+                            {% set dc = domain_color(paper.domain.id) %}
+                            <span class="badge" style="background-color: {{ dc }}1a; color: {{ dc }};" title="所属领域">
                                 <i class="bi bi-folder"></i> {{ paper.domain.name }}
                             </span>
                             {% endif %}
@@ -320,67 +308,53 @@
                             {% if paper.year %}
                             <span class="badge bg-info">{{ paper.year }}</span>
                             {% endif %}
+                            <small class="text-muted ms-1">
+                                发布 {{ paper.published_date.strftime('%Y-%m-%d') if paper.published_date else 'N/A' }}
+                                <span class="mx-1">·</span>
+                                收录 {{ paper.fetched_date.strftime('%m-%d %H:%M') if paper.fetched_date else 'N/A' }}
+                            </small>
                         </div>
-                        {% if paper.llm_score is not none or paper.llm_value_score is not none %}
-                        <div class="d-flex flex-wrap gap-2">
-                            {% if paper.llm_score is not none %}
-                            <span class="badge bg-success" title="LLM相关度评分">
-                                <i class="bi bi-bullseye"></i> 相关度 {{ paper.llm_score }}
-                            </span>
-                            {% endif %}
-                            {% if paper.llm_value_score is not none %}
-                            <span class="badge bg-info" title="LLM价值评分">
-                                <i class="bi bi-gem"></i> 价值 {{ paper.llm_value_score }}
-                            </span>
-                            {% endif %}
-                        </div>
-                        {% endif %}
-                    </div>
 
-                    <!-- 作者 -->
-                    <p class="card-text text-muted mb-2">
-                        <small><i class="bi bi-people"></i> {{ paper.authors|join(', ') }}</small>
-                    </p>
+                        <!-- 作者 -->
+                        <p class="paper-authors mb-1" title="{{ paper.authors|join(', ') }}">
+                            <i class="bi bi-people"></i> {{ paper.authors|join(', ') }}
+                        </p>
 
-                    <!-- 摘要 -->
-                    {% if paper.abstract %}
-                    <div class="d-flex align-items-start gap-2">
-                        <div class="flex-grow-1">
-                            <p class="card-text abstract-text mb-0" id="abstract-{{ paper.id }}">
-                                <small>{{ paper.abstract[:300] }}{% if paper.abstract|length > 300 %}...{% endif %}</small>
-                            </p>
+                        <!-- 摘要 -->
+                        {% if paper.abstract %}
+                        <div class="d-flex align-items-start gap-2 mt-1">
+                            <div class="flex-grow-1" style="min-width:0">
+                                <p class="card-text abstract-text mb-0" id="abstract-{{ paper.id }}">
+                                    <small>{{ paper.abstract[:300] }}{% if paper.abstract|length > 300 %}...{% endif %}</small>
+                                </p>
+                            </div>
+                            <button class="btn btn-sm btn-link p-0 flex-shrink-0" onclick="markPaperRead({{ paper.id }}); translateAbstract({{ paper.id }})" title="翻译摘要">
+                                <i class="bi bi-translate"></i>
+                            </button>
                         </div>
-                        <button class="btn btn-sm btn-link p-0 text-primary flex-shrink-0" onclick="markPaperRead({{ paper.id }}); translateAbstract({{ paper.id }})" title="翻译摘要">
-                            <i class="bi bi-translate"></i>
+                        {% if paper.abstract|length > 300 %}
+                        <button class="btn btn-sm btn-link p-0" onclick="markPaperRead({{ paper.id }}); toggleAbstract({{ paper.id }})">
+                            <span id="abstract-toggle-{{ paper.id }}">展开全文</span>
                         </button>
-                    </div>
-                    {% if paper.abstract|length > 300 %}
-                    <button class="btn btn-sm btn-link p-0" onclick="markPaperRead({{ paper.id }}); toggleAbstract({{ paper.id }})">
-                        <span id="abstract-toggle-{{ paper.id }}">展开全文</span>
-                    </button>
-                    {% endif %}
-                    {% endif %}
+                        {% endif %}
+                        {% endif %}
 
-                    <!-- 操作按钮 -->
-                    <div class="mt-2">
-                        {% if paper.url %}
-                        <a href="{{ paper.url }}" target="_blank" class="btn btn-sm btn-outline-primary" onclick="markPaperRead({{ paper.id }})">
-                            <i class="bi bi-link-45deg"></i> 原文链接
-                        </a>
-                        {% endif %}
-                        {% if paper.pdf_url %}
-                        <a href="{{ paper.pdf_url }}" target="_blank" class="btn btn-sm btn-outline-danger" onclick="markPaperRead({{ paper.id }})">
-                            <i class="bi bi-file-pdf"></i> PDF
-                        </a>
-                        {% endif %}
-                        <button class="btn btn-sm btn-outline-info" onclick="markPaperRead({{ paper.id }}); translatePaper({{ paper.id }})" id="translate-btn-{{ paper.id }}">
-                            <i class="bi bi-translate"></i> 翻译
-                        </button>
-                        <small class="text-muted ms-3">
-                            发布于: {{ paper.published_date.strftime('%Y-%m-%d') if paper.published_date else 'N/A' }}
-                            <span class="mx-1">·</span>
-                            添加于: {{ paper.fetched_date.strftime('%Y-%m-%d %H:%M') if paper.fetched_date else 'N/A' }}
-                        </small>
+                        <!-- 操作按钮 -->
+                        <div class="mt-2 d-flex align-items-center gap-2">
+                            {% if paper.url %}
+                            <a href="{{ paper.url }}" target="_blank" class="btn btn-sm btn-outline-primary" onclick="markPaperRead({{ paper.id }})">
+                                <i class="bi bi-link-45deg"></i> 原文
+                            </a>
+                            {% endif %}
+                            {% if paper.pdf_url %}
+                            <a href="{{ paper.pdf_url }}" target="_blank" class="btn btn-sm btn-outline-danger" onclick="markPaperRead({{ paper.id }})">
+                                <i class="bi bi-file-pdf"></i> PDF
+                            </a>
+                            {% endif %}
+                            <button class="btn btn-sm btn-outline-info" onclick="markPaperRead({{ paper.id }}); translatePaper({{ paper.id }})" id="translate-btn-{{ paper.id }}">
+                                <i class="bi bi-translate"></i> 翻译
+                            </button>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -446,31 +420,6 @@ const originalTitles = {
     {% endfor %}
 };
 
-function applyPaperQuickFilters() {
-    const params = new URLSearchParams(window.location.search);
-    params.delete('page');
-    params.delete('year');
-    params.delete('update_log');
-    params.delete('days');
-    params.delete('domain');
-    params.delete('source');
-
-    const days = document.getElementById('quickTimeFilter').value;
-    const domain = document.getElementById('quickDomainFilter').value;
-    const source = document.getElementById('quickSourceFilter').value;
-    if (days) params.set('days', days);
-    if (domain) params.set('domain', domain);
-    if (source) params.append('source', source);
-
-    window.location.href = `/?${params.toString()}`;
-}
-
-function resetPaperQuickFilters() {
-    const params = new URLSearchParams(window.location.search);
-    ['page', 'days', 'domain', 'source', 'year', 'update_log'].forEach(key => params.delete(key));
-    window.location.href = `/?${params.toString()}`;
-}
-
 function toggleAbstract(paperId) {
     const abstractEl = document.getElementById(`abstract-${paperId}`);
     const toggleEl = document.getElementById(`abstract-toggle-${paperId}`);
@@ -517,6 +466,10 @@ function applyFilters() {
     const year = document.getElementById('yearFilter').value;
     if (year) params.set('year', year);
 
+    // 时间（最近 N 天）
+    const daysEl = document.getElementById('daysFilter');
+    if (daysEl && daysEl.value) params.set('days', daysEl.value);
+
     // 更新批次
     const updateLogEl = document.getElementById('updateLogFilter');
     if (updateLogEl && updateLogEl.value) params.set('update_log', updateLogEl.value);
@@ -557,15 +510,16 @@ function toggleDomainEnabled(domainId, enabled) {
     });
 }
 
-function triggerFetch(updateAll = false) {
+function triggerFetch(updateAll = false, domainIdOverride = null) {
     const btn = document.getElementById('fetchBtn');
     const allBtn = document.getElementById('fetchAllBtn');
     const domainSelect = document.getElementById('domainFilter');
-    const domainId = domainSelect.value;
+    // 优先使用显式传入的领域（领域管理行的更新按钮），否则用筛选栏选中的领域
+    const domainId = domainIdOverride || domainSelect.value;
 
+    // 未选择具体领域时，"立即更新"默认更新全部已启用领域
     if (!updateAll && !domainId) {
-        alert('请先选择一个具体领域，或点击“更新全部领域”。');
-        return;
+        updateAll = true;
     }
 
     if (updateAll && !confirm('确认更新全部已启用领域吗？此操作可能需要较长时间。')) {
@@ -938,9 +892,18 @@ function hideProgressBar(success = true) {
 }
 
 // 全选/取消全选
+// 跨页全选状态：true 时表示选中当前筛选条件下的全部论文
+let selectAllMode = false;
+const totalPapers = {{ total }};
+
 function toggleSelectAll() {
     const selectAll = document.getElementById('selectAll');
     const checkboxes = document.querySelectorAll('.paper-checkbox');
+
+    // 取消勾选时同时退出跨页全选
+    if (!selectAll.checked) {
+        selectAllMode = false;
+    }
 
     checkboxes.forEach(cb => {
         cb.checked = selectAll.checked;
@@ -949,18 +912,39 @@ function toggleSelectAll() {
     updateSelectedCount();
 }
 
+// 跨页全选（作用于当前筛选条件下的全部论文）
+function toggleSelectAllPapers() {
+    selectAllMode = document.getElementById('selectAllPapers').checked;
+    document.querySelectorAll('.paper-checkbox').forEach(cb => cb.checked = selectAllMode);
+    document.getElementById('selectAll').checked = selectAllMode;
+    updateSelectedCount();
+    if (selectAllMode) {
+        showToast(`已跨页全选 ${totalPapers} 篇论文（当前筛选条件）`, 'success');
+    }
+}
+
 // 更新选中数量
 function updateSelectedCount() {
     const checkboxes = document.querySelectorAll('.paper-checkbox');
     const selected = Array.from(checkboxes).filter(cb => cb.checked);
 
-    document.getElementById('selectedCount').textContent = selected.length;
+    // 跨页全选模式下手动取消个别勾选，则退出跨页全选
+    if (selectAllMode && selected.length < checkboxes.length) {
+        selectAllMode = false;
+    }
+
+    document.getElementById('selectedCount').textContent = selectAllMode ? totalPapers : selected.length;
 
     // 启用/禁用批量操作按钮
-    const hasSelection = selected.length > 0;
+    const hasSelection = selectAllMode || selected.length > 0;
     document.getElementById('batchFavBtn').disabled = !hasSelection;
     document.getElementById('batchUnfavBtn').disabled = !hasSelection;
     document.getElementById('batchDeleteBtn').disabled = !hasSelection;
+    document.getElementById('batchBibtexBtn').disabled = !hasSelection;
+    document.getElementById('batchExportBtn').disabled = !hasSelection;
+
+    // 同步"跨页全选"复选框状态
+    document.getElementById('selectAllPapers').checked = selectAllMode;
 }
 
 // 获取选中的论文ID
@@ -969,11 +953,37 @@ function getSelectedPaperIds() {
     return Array.from(checkboxes).map(cb => parseInt(cb.value));
 }
 
+// 构建批量操作请求体：跨页全选传 select_all+当前筛选条件，否则传显式 paper_ids
+function buildBatchPayload() {
+    if (selectAllMode) {
+        const p = new URLSearchParams(window.location.search);
+        const filters = {};
+        ['domain', 'year', 'days', 'q', 'update_log'].forEach(k => {
+            const v = p.get(k);
+            if (v) filters[k] = v;
+        });
+        const sources = p.getAll('source');
+        if (sources.length) filters.source = sources;
+        return { select_all: true, filters };
+    }
+    return { paper_ids: getSelectedPaperIds() };
+}
+
+// 导出选中论文（服务端生成，数据完整）
+async function exportSelected(format) {
+    const payload = buildBatchPayload();
+    if (!payload.select_all && payload.paper_ids.length === 0) {
+        showToast('请先选择论文', 'warning');
+        return;
+    }
+    await downloadExport(format, payload);
+}
+
 // 批量收藏
 async function batchFavorite() {
     const paperIds = getSelectedPaperIds();
 
-    if (paperIds.length === 0) {
+    if (!selectAllMode && paperIds.length === 0) {
         showToast('请选择要收藏的论文', 'warning');
         return;
     }
@@ -999,7 +1009,7 @@ async function batchFavorite() {
         const response = await fetch('/api/batch/favorite', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({paper_ids: paperIds})
+            body: JSON.stringify(buildBatchPayload())
         });
 
         const data = await response.json();
@@ -1046,7 +1056,7 @@ async function batchFavorite() {
 async function batchUnfavorite() {
     const paperIds = getSelectedPaperIds();
 
-    if (paperIds.length === 0) {
+    if (!selectAllMode && paperIds.length === 0) {
         showToast('请选择要取消收藏的论文', 'warning');
         return;
     }
@@ -1072,7 +1082,7 @@ async function batchUnfavorite() {
         const response = await fetch('/api/batch/unfavorite', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({paper_ids: paperIds})
+            body: JSON.stringify(buildBatchPayload())
         });
 
         const data = await response.json();
@@ -1113,18 +1123,20 @@ async function batchUnfavorite() {
 // 确认批量删除
 function confirmBatchDelete() {
     const paperIds = getSelectedPaperIds();
-    const count = paperIds.length;
+    const count = selectAllMode ? totalPapers : paperIds.length;
 
-    if (count === 0) {
+    if (!selectAllMode && count === 0) {
         showToast('请选择要删除的论文', 'warning');
         return;
     }
 
+    const scopeText = selectAllMode ? `当前筛选条件下的全部 ${count} 篇论文（跨页全选）` : `选中的 ${count} 篇论文`;
+
     // 二次确认
-    const confirm1 = confirm(`⚠️ 确定要删除选中的 ${count} 篇论文吗？\n\n此操作不可恢复！`);
+    const confirm1 = confirm(`⚠️ 确定要删除${scopeText}吗？\n\n此操作不可恢复！`);
     if (!confirm1) return;
 
-    const confirm2 = confirm(`⚠️ 二次确认！\n\n即将删除 ${count} 篇论文，删除后无法恢复！\n\n点击"确定"继续，点击"取消"返回。`);
+    const confirm2 = confirm(`⚠️ 二次确认！\n\n即将删除${scopeText}，删除后无法恢复！\n\n点击"确定"继续，点击"取消"返回。`);
     if (!confirm2) return;
 
     batchDelete(paperIds);
@@ -1153,7 +1165,7 @@ async function batchDelete(paperIds) {
         const response = await fetch('/api/batch/delete', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({paper_ids: paperIds})
+            body: JSON.stringify(buildBatchPayload())
         });
 
         const data = await response.json();
@@ -1191,6 +1203,7 @@ async function batchDelete(paperIds) {
 
 // 清除选择
 function clearSelection() {
+    selectAllMode = false;
     document.getElementById('selectAll').checked = false;
     document.querySelectorAll('.paper-checkbox').forEach(cb => cb.checked = false);
     updateSelectedCount();
@@ -1926,108 +1939,50 @@ async function showStats() {
     statsBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> 加载中...';
 
     try {
-        const response = await fetch('/api/stats');
-        const stats = await response.json();
+        // 数据速览：只取核心指标，与 /stats 完整分析页错开定位
+        const [statsRes, scheduleRes] = await Promise.all([
+            fetch('/api/stats'),
+            fetch('/api/schedule')
+        ]);
+        const stats = await statsRes.json();
+        const schedule = await scheduleRes.json();
 
-        // 构建统计信息HTML
-        let statsHtml = '<div class="row">';
+        const fmtTime = (iso) => {
+            if (!iso) return '—';
+            const d = new Date(iso);
+            return d.toLocaleString('zh-CN', {month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false});
+        };
 
-        // 整体统计
-        statsHtml += `
-            <div class="col-md-6 mb-3">
-                <div class="card">
-                    <div class="card-header bg-primary text-white">
-                        <h6 class="mb-0"><i class="bi bi-graph-up"></i> 整体统计</h6>
-                    </div>
-                    <div class="card-body">
-                        <table class="table table-sm">
-                            <tbody>
-                                <tr>
-                                    <td><strong>总论文数</strong></td>
-                                    <td class="text-end">${stats.total_papers}</td>
-                                </tr>
-                                <tr>
-                                    <td><strong>研究领域</strong></td>
-                                    <td class="text-end">${stats.total_domains}</td>
-                                </tr>
-                            </tbody>
-                        </table>
+        const items = [
+            {label: '论文总数', value: stats.total_papers, icon: 'bi-file-text', color: 'var(--primary)'},
+            {label: '研究领域', value: stats.total_domains, icon: 'bi-folder', color: 'var(--info)'},
+            {label: '收藏', value: stats.favorites_count, icon: 'bi-star', color: 'var(--warning)'},
+            {label: '本周新增', value: '+' + stats.week_new, icon: 'bi-plus-circle', color: 'var(--success)'},
+            {label: '平均相关度', value: stats.avg_relevance ?? '—', icon: 'bi-bullseye', color: 'var(--success)'},
+            {label: '平均价值', value: stats.avg_value ?? '—', icon: 'bi-gem', color: 'var(--info)'}
+        ];
 
-                        <h6 class="mt-3 mb-2">数据源分布</h6>
-                        <div class="d-flex flex-wrap gap-2">
-                            ${Object.entries(stats.by_source).map(([source, count]) => `
-                                <span class="badge bg-secondary">
-                                    ${source.toUpperCase()}: ${count}
-                                </span>
-                            `).join('')}
+        let statsHtml = '<div class="row g-2">';
+        items.forEach(it => {
+            statsHtml += `
+                <div class="col-4">
+                    <div class="border rounded p-2 text-center h-100">
+                        <div class="fw-bold fs-5" style="color:${it.color}; font-variant-numeric: tabular-nums;">
+                            <i class="bi ${it.icon} me-1"></i>${it.value}
                         </div>
-
-                        <h6 class="mt-3 mb-2">年份分布 (Top 5)</h6>
-                        <div class="d-flex flex-wrap gap-2">
-                            ${Object.entries(stats.by_year).slice(0, 5).map(([year, count]) => `
-                                <span class="badge bg-info">
-                                    ${year}: ${count}
-                                </span>
-                            `).join('')}
-                        </div>
+                        <div class="text-muted" style="font-size:0.75rem">${it.label}</div>
                     </div>
                 </div>
-            </div>
-        `;
-
-        // 各领域统计
-        statsHtml += `
-            <div class="col-md-6 mb-3">
-                <div class="card">
-                    <div class="card-header bg-success text-white">
-                        <h6 class="mb-0"><i class="bi bi-list"></i> 各领域统计</h6>
-                    </div>
-                    <div class="card-body" style="max-height: 400px; overflow-y: auto;">
-        `;
-
-        if (stats.domains && stats.domains.length > 0) {
-            statsHtml += '<div class="list-group list-group-flush">';
-            stats.domains.forEach(domain => {
-                statsHtml += `
-                    <div class="list-group-item">
-                        <div class="d-flex justify-content-between align-items-start mb-2">
-                            <strong>${domain.name}</strong>
-                            <span class="badge bg-primary">${domain.total} 篇</span>
-                        </div>
-                        <div class="mb-2">
-                            <small class="text-muted">数据源：</small>
-                            <div class="d-flex flex-wrap gap-1 mt-1">
-                                ${Object.entries(domain.by_source).filter(([s, c]) => c > 0).map(([source, count]) => `
-                                    <span class="badge bg-secondary" style="font-size: 0.75rem;">${source}: ${count}</span>
-                                `).join('')}
-                            </div>
-                        </div>
-                        <div>
-                            <small class="text-muted">平均评分：</small>
-                            <div class="d-flex gap-1 mt-1">
-                                ${domain.avg_relevance !== null
-                                    ? `<span class="badge bg-success" title="平均相关度">相关度 ${domain.avg_relevance}/100</span>`
-                                    : '<span class="text-muted">无相关度</span>'}
-                                ${domain.avg_value !== null
-                                    ? `<span class="badge bg-info text-dark" title="平均价值">价值 ${domain.avg_value}/100</span>`
-                                    : '<span class="text-muted">无价值评分</span>'}
-                            </div>
-                        </div>
-                    </div>
-                `;
-            });
-            statsHtml += '</div>';
-        } else {
-            statsHtml += '<p class="text-muted text-center my-3">暂无领域数据</p>';
-        }
-
-        statsHtml += `
-                    </div>
-                </div>
-            </div>
-        `;
-
+            `;
+        });
         statsHtml += '</div>';
+
+        statsHtml += `
+            <div class="d-flex justify-content-between align-items-center text-muted small mt-3 px-1">
+                <span><i class="bi bi-clock"></i> 下次定时更新: ${fmtTime(schedule.next_run)}</span>
+                <a href="/stats" class="text-decoration-none">查看完整统计 <i class="bi bi-arrow-right"></i></a>
+            </div>
+        `;
 
         // 更新模态框内容
         document.getElementById('statsModalContent').innerHTML = statsHtml;
@@ -2040,18 +1995,18 @@ async function showStats() {
         showToast('加载统计失败: ' + err.message, 'error');
     } finally {
         statsBtn.disabled = false;
-        statsBtn.innerHTML = '<i class="bi bi-bar-chart"></i> 查看统计';
+        statsBtn.innerHTML = '<i class="bi bi-speedometer2"></i> 数据速览';
     }
 }
 </script>
 
-<!-- 统计信息模态框 -->
+<!-- 数据速览模态框 -->
 <div class="modal fade" id="statsModal" tabindex="-1">
-    <div class="modal-dialog modal-xl">
+    <div class="modal-dialog modal-lg">
         <div class="modal-content">
             <div class="modal-header">
                 <h5 class="modal-title">
-                    <i class="bi bi-bar-chart"></i> 论文统计信息
+                    <i class="bi bi-speedometer2"></i> 数据速览
                 </h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
             </div>

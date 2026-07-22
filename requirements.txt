@@ -4,6 +4,7 @@ APScheduler==3.10.4
 requests==2.31.0
 feedparser==6.0.11
 python-dotenv==1.0.0
+openpyxl>=3.1.0
 
 # Optional LLM Provider Dependencies
 # Install based on your chosen provider:

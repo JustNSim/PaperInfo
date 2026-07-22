@@ -30,6 +30,30 @@ def _feishu_signature(timestamp: int, secret: str) -> str:
     return base64.b64encode(digest).decode('utf-8')
 
 
+def _recent_new_papers(update_log, limit: int = 8):
+    """按批次时间窗口查询本次更新新增的论文（用于在通知中附带标题）。
+
+    任何异常都返回空列表，绝不影响通知发送。
+    """
+    if not getattr(update_log, 'trigger_time', None) or not getattr(update_log, 'total_new', 0):
+        return []
+    try:
+        from datetime import timedelta
+        from models import Paper
+        window = timedelta(minutes=5)
+        return (
+            Paper.query
+            .filter(Paper.fetched_date >= update_log.trigger_time - window,
+                    Paper.fetched_date <= update_log.trigger_time + window)
+            .order_by(Paper.llm_score.desc().nulls_last(), Paper.fetched_date.desc())
+            .limit(limit)
+            .all()
+        )
+    except Exception as exc:
+        logger.debug('查询批次新增论文失败，通知将不附带标题: %s', exc)
+        return []
+
+
 def _format_source_stats(source_stats: dict) -> str:
     if not source_stats:
         return '无'
@@ -73,11 +97,26 @@ def build_update_message(update_log, domain_names: Optional[Iterable[str]] = Non
 
     source_failures = details.get('source_failures') or {}
     if source_failures:
-        lines.append(f'来源异常：{"、".join(source_failures.keys())}')
+        # 附上熔断原因，便于区分"对方临时故障"与配置问题
+        lines.append(
+            f'来源异常：{"、".join(f"{k}（{v}）" for k, v in source_failures.items())}'
+        )
 
     if update_log.error_message:
         error = str(update_log.error_message).replace('\n', ' ').strip()
         lines.append(f'错误：{error[:500]}')
+
+    # 附上前几篇新增论文标题（按相关度排序），手机不看电脑也能了解更新内容
+    papers = _recent_new_papers(update_log)
+    if papers:
+        lines.append('新增论文：')
+        for i, paper in enumerate(papers, 1):
+            title = paper.title
+            if paper.llm_score is not None:
+                title += f'（{paper.llm_score}/{paper.llm_value_score}）'
+            lines.append(f'{i}. {title}')
+        if (update_log.total_new or 0) > len(papers):
+            lines.append(f'… 共 {update_log.total_new} 篇')
 
     base_url = (Config.PAPERINFO_PUBLIC_URL or '').rstrip('/')
     if base_url and getattr(update_log, 'id', None):

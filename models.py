@@ -162,3 +162,19 @@ class Paper(db.Model):
                 db.and_(Paper.source == source, Paper.title == title)
             )
         ).scalar()
+
+
+class ReadHistory(db.Model):
+    """论文点击/阅读历史（每篇论文一行，upsert 更新）"""
+    __tablename__ = 'read_history'
+
+    id = db.Column(db.Integer, primary_key=True)
+    paper_id = db.Column(db.Integer, db.ForeignKey('papers.id'), unique=True, nullable=False, index=True)
+    read_count = db.Column(db.Integer, default=1)  # 累计点击次数
+    last_read_at = db.Column(db.DateTime, default=get_beijing_time, index=True)  # 最近点击时间
+
+    # 关联论文
+    paper = db.relationship('Paper', backref=db.backref('read_history', uselist=False))
+
+    def __repr__(self):
+        return f'<ReadHistory paper={self.paper_id} count={self.read_count}>'
