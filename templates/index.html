@@ -12,6 +12,7 @@
     </button>
     <ul class="dropdown-menu dropdown-menu-end">
         <li><button class="dropdown-item" onclick="triggerFetch(true)" id="fetchAllBtn"><i class="bi bi-cloud-download-fill"></i> 更新全部领域</button></li>
+        <li><button class="dropdown-item" onclick="backfillAffiliations()" id="affiliationBackfillBtn"><i class="bi bi-buildings"></i> 回填作者单位</button></li>
         <li><button class="dropdown-item" onclick="showStats()"><i class="bi bi-speedometer2"></i> 数据速览</button></li>
         <li><hr class="dropdown-divider"></li>
         <li><button class="dropdown-item text-danger" onclick="confirmClearData()" id="clearBtn"><i class="bi bi-trash3"></i> 清空数据</button></li>
@@ -56,10 +57,6 @@
                     <div class="form-check">
                         <input class="form-check-input" type="checkbox" value="dblp" id="sourceDblp" {% if 'dblp' in sources or not sources %}checked{% endif %}>
                         <label class="form-check-label" for="sourceDblp">DBLP</label>
-                    </div>
-                    <div class="form-check">
-                        <input class="form-check-input" type="checkbox" value="s2" id="sourceS2" {% if 's2' in sources or not sources %}checked{% endif %}>
-                        <label class="form-check-label" for="sourceS2">Semantic Scholar</label>
                     </div>
                 </div>
 
@@ -212,14 +209,16 @@
                     <button class="btn btn-outline-secondary" onclick="batchUnfavorite()" id="batchUnfavBtn" disabled>
                         <i class="bi bi-star-fill"></i> 取消收藏
                     </button>
-                    <button class="btn btn-outline-success" onclick="exportSelected('bibtex')" id="batchBibtexBtn" disabled title="导出选中论文为 BibTeX">
-                        <i class="bi bi-file-earmark-code"></i> BibTeX
-                    </button>
                     <div class="btn-group btn-group-sm" role="group">
                         <button class="btn btn-outline-primary dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false" id="batchExportBtn" disabled title="导出选中论文">
                             <i class="bi bi-download"></i> 导出
                         </button>
                         <ul class="dropdown-menu">
+                            <li><button class="dropdown-item" onclick="exportSelected('zotero')"><i class="bi bi-journal-plus"></i> 添加到本地 Zotero</button></li>
+                            <li><hr class="dropdown-divider"></li>
+                            <li><button class="dropdown-item" onclick="exportSelected('pdf')"><i class="bi bi-file-earmark-pdf"></i> 下载PDF（.pdf/.zip）</button></li>
+                            <li><hr class="dropdown-divider"></li>
+                            <li><button class="dropdown-item" onclick="exportSelected('bibtex')"><i class="bi bi-file-earmark-code"></i> BibTeX (.bib)</button></li>
                             <li><button class="dropdown-item" onclick="exportSelected('xlsx')"><i class="bi bi-file-excel"></i> Excel (.xlsx)</button></li>
                             <li><button class="dropdown-item" onclick="exportSelected('csv')"><i class="bi bi-filetype-csv"></i> CSV (.csv)</button></li>
                         </ul>
@@ -319,6 +318,11 @@
                         <p class="paper-authors mb-1" title="{{ paper.authors|join(', ') }}">
                             <i class="bi bi-people"></i> {{ paper.authors|join(', ') }}
                         </p>
+                        {% if paper.affiliation_names %}
+                        <p class="paper-affiliations mb-1" title="{{ paper.affiliation_names|join(' · ') }}">
+                            <i class="bi bi-buildings"></i> {{ paper.affiliation_names|join(' · ') }}
+                        </p>
+                        {% endif %}
 
                         <!-- 摘要 -->
                         {% if paper.abstract %}
@@ -460,7 +464,6 @@ function applyFilters() {
     // 数据源
     if (document.getElementById('sourceArxiv').checked) params.append('source', 'arxiv');
     if (document.getElementById('sourceDblp').checked) params.append('source', 'dblp');
-    if (document.getElementById('sourceS2').checked) params.append('source', 's2');
 
     // 年份
     const year = document.getElementById('yearFilter').value;
@@ -508,6 +511,29 @@ function toggleDomainEnabled(domainId, enabled) {
         switchEl.checked = !enabled;
         alert('请求失败: ' + err);
     });
+}
+
+async function backfillAffiliations() {
+    if (!confirm('开始在后台回填尚未获取的作者单位吗？任务会限速执行，可继续使用页面。')) {
+        return;
+    }
+    const btn = document.getElementById('affiliationBackfillBtn');
+    const originalHtml = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> 正在启动...';
+    try {
+        const response = await fetch('/api/affiliations/backfill', {method: 'POST'});
+        const data = await response.json();
+        if (!response.ok) {
+            throw new Error(data.message || '无法启动回填任务');
+        }
+        alert(data.message + '。可通过 /api/affiliations/backfill/status 查看进度。');
+    } catch (error) {
+        alert('作者单位回填未启动：' + error.message);
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = originalHtml;
+    }
 }
 
 function triggerFetch(updateAll = false, domainIdOverride = null) {
@@ -940,7 +966,6 @@ function updateSelectedCount() {
     document.getElementById('batchFavBtn').disabled = !hasSelection;
     document.getElementById('batchUnfavBtn').disabled = !hasSelection;
     document.getElementById('batchDeleteBtn').disabled = !hasSelection;
-    document.getElementById('batchBibtexBtn').disabled = !hasSelection;
     document.getElementById('batchExportBtn').disabled = !hasSelection;
 
     // 同步"跨页全选"复选框状态
@@ -976,7 +1001,11 @@ async function exportSelected(format) {
         showToast('请先选择论文', 'warning');
         return;
     }
-    await downloadExport(format, payload);
+    if (format === 'zotero') {
+        await sendToLocalZotero(payload);
+    } else {
+        await downloadExport(format, payload);
+    }
 }
 
 // 批量收藏

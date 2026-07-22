@@ -521,6 +521,18 @@ body {
     text-overflow: ellipsis;
 }
 
+.paper-affiliations {
+    color: #475569;
+    font-size: 0.8rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.paper-affiliations i {
+    color: var(--primary);
+}
+
 /* 摘要 */
 .abstract-text {
     line-height: 1.65;
@@ -529,7 +541,12 @@ body {
     padding: 0 0 0 0.6rem;
     border-radius: 0;
     border-left: 2px solid var(--border);
-    font-size: 0.85rem;
+    font-size: 0.95rem;
+}
+
+/* 模板使用 small 包裹摘要；覆盖 Bootstrap 的二次缩小，保持正文可读性。 */
+.abstract-text small {
+    font-size: inherit;
 }
 
 .abstract-text.translated {
@@ -871,7 +888,7 @@ footer a:hover {
     }
 
     .abstract-text {
-        font-size: 0.8rem;
+        font-size: 0.9rem;
     }
 }
 

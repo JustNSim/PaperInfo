@@ -14,7 +14,8 @@ import threading
 
 from config import Config
 from models import db, Domain, Paper, UpdateLog
-from crawler import ArxivCrawler, DBLPCrawler, SemanticScholarCrawler
+from crawler import ArxivCrawler, DBLPCrawler
+from affiliation_service import enqueue_affiliation_enrichment
 from llm import LLMEvaluator, LLMEvaluatorError
 from models import get_beijing_time
 from notification_service import send_update_notification
@@ -263,14 +264,6 @@ def _create_source_crawlers() -> dict:
             max_retries=Config.DBLP_MAX_RETRIES,
         ),
     }
-    if Config.S2_API_KEYS:
-        crawlers['s2'] = SemanticScholarCrawler(
-            delay=Config.S2_DELAY,
-            timeout=Config.S2_REQUEST_TIMEOUT,
-            max_results=100,
-            api_keys=Config.S2_API_KEYS,
-            max_retries=Config.S2_MAX_RETRIES,
-        )
     return crawlers
 
 
@@ -346,7 +339,6 @@ def fetch_papers_for_domain(domain: Domain, source_crawlers: dict = None) -> dic
             result['source_stats']['arxiv'] = arxiv_count
 
         # 2. 从 DBLP 抓取
-        # 提前初始化年份窗口（S2 也会用到）
         current_year = get_beijing_time().year
         from_year = current_year - Config.DBLP_YEAR_WINDOW + 1
         to_year = current_year
@@ -365,25 +357,6 @@ def fetch_papers_for_domain(domain: Domain, source_crawlers: dict = None) -> dic
             dblp_count = _save_papers(dblp_papers, domain)
             result['new_count'] += dblp_count
             result['source_stats']['dblp'] = dblp_count
-
-        # 3. 从 Semantic Scholar 抓取（仅在配置了 API Key 时）
-        if not Config.S2_API_KEYS:
-            logger.info(f"跳过 Semantic Scholar 抓取（未配置 API Key，避免大量 429 限流）")
-            result['source_stats']['s2'] = 0
-        else:
-            logger.info(f"从 Semantic Scholar 抓取 {domain.name} 论文... ({len(Config.S2_API_KEYS)} 个 API Key 轮换)")
-            s2_crawler = source_crawlers['s2']
-            core_keywords = domain.keywords[:5] if domain.keywords else None
-            s2_papers = s2_crawler.search(
-                keywords=domain.keywords,
-                venues=domain.ccf_venues,
-                from_year=from_year,
-                to_year=to_year,
-                core_keywords=core_keywords
-            )
-            s2_count = _save_papers(s2_papers, domain)
-            result['new_count'] += s2_count
-            result['source_stats']['s2'] = s2_count
 
         logger.info(f"领域 {domain.name} 抓取完成，新增 {result['new_count']} 篇论文")
 
@@ -578,9 +551,14 @@ def _save_papers(papers: list, domain: Domain) -> int:
         paper = Paper(
             title=paper_data['title'],
             authors=paper_data.get('authors', []),
+            author_affiliations=paper_data.get('author_affiliations', []),
+            affiliations_source=('arxiv' if paper_data.get('author_affiliations') else None),
+            affiliations_status=('success' if paper_data.get('author_affiliations') else 'pending'),
+            affiliations_fetched_at=(get_beijing_time() if paper_data.get('author_affiliations') else None),
             abstract=paper_data.get('abstract'),
             source=paper_data['source'],
             source_id=paper_data.get('source_id'),
+            doi=paper_data.get('doi'),
             year=paper_data.get('year'),
             venue=paper_data.get('venue'),
             url=paper_data.get('url'),
@@ -638,6 +616,7 @@ def _commit_batch(batch: list) -> int:
 
     if committed > 0:
         logger.info(f"成功提交批次: {committed}/{len(batch)} 篇论文")
+        enqueue_affiliation_enrichment([paper.id for paper in batch if paper.id])
     return committed
 
 

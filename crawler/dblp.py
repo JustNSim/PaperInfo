@@ -2,6 +2,7 @@
 DBLP API 爬虫
 """
 import logging
+import re
 import time
 from typing import List, Dict, Any, Optional
 from datetime import datetime
@@ -313,7 +314,22 @@ class DBLPCrawler(BaseCrawler):
             # 提取 URL
             url = info.get('url', '')
             ee = info.get('ee', '')
-            final_url = ee if ee else url
+            ee_values = ee if isinstance(ee, list) else ([ee] if ee else [])
+            ee_values = [
+                value.get('text') or value.get('#text') if isinstance(value, dict) else value
+                for value in ee_values
+            ]
+            ee_values = [value for value in ee_values if value]
+            final_url = ee_values[0] if ee_values else url
+
+            # DBLP 的 ee 通常指向 DOI；保存 DOI 供 OpenAlex 精确匹配。
+            doi = info.get('doi')
+            if not doi:
+                for candidate in ee_values:
+                    match = re.search(r'(10\.\d{4,9}/[^?#\s]+)', str(candidate), re.IGNORECASE)
+                    if match:
+                        doi = match.group(1)
+                        break
 
             # 提取发布日期
             published_date = None
@@ -334,6 +350,7 @@ class DBLPCrawler(BaseCrawler):
                 'abstract': None,  # DBLP API 不提供摘要
                 'source': 'dblp',
                 'source_id': source_id,
+                'doi': doi,
                 'year': year,
                 'venue': venue,
                 'url': final_url,

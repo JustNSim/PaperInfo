@@ -160,11 +160,14 @@ function copyToClipboard(text, buttonElement) {
 
 /**
  * 通过服务端接口导出论文并触发下载
- * @param {string} format - 'csv' 或 'bibtex'
+ * @param {string} format - 'csv'、'xlsx'、'bibtex' 或 'pdf'
  * @param {object} payload - 选择范围，如 {paper_ids: [...]} / {select_all: true, filters: {...}} / {favorites: true}
  */
 async function downloadExport(format, payload) {
     try {
+        if (format === 'pdf') {
+            showToast('正在逐篇下载 PDF 并生成压缩包，请耐心等待...', 'info');
+        }
         const res = await fetch(`/api/export/${format}`, {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
@@ -177,15 +180,136 @@ async function downloadExport(format, payload) {
         }
         const blob = await res.blob();
         const dateStr = new Date().toISOString().split('T')[0];
-        const ext = { csv: 'csv', bibtex: 'bib', xlsx: 'xlsx' }[format] || format;
+        const contentType = res.headers.get('Content-Type') || '';
+        const isSinglePdf = format === 'pdf' && contentType.includes('application/pdf');
+        const ext = isSinglePdf
+            ? 'pdf'
+            : ({ csv: 'csv', bibtex: 'bib', xlsx: 'xlsx', pdf: 'zip' }[format] || format);
+        const disposition = res.headers.get('Content-Disposition') || '';
+        let serverFilename = '';
+        const utf8Match = disposition.match(/filename\*=UTF-8''([^;]+)/i);
+        const plainMatch = disposition.match(/filename="?([^";]+)"?/i);
+        if (utf8Match) {
+            try { serverFilename = decodeURIComponent(utf8Match[1]); } catch (_) {}
+        } else if (plainMatch) {
+            serverFilename = plainMatch[1];
+        }
         const link = document.createElement('a');
         link.href = URL.createObjectURL(blob);
-        link.download = `papers_${dateStr}.${ext}`;
+        link.download = serverFilename || `papers_${dateStr}.${ext}`;
         link.click();
         URL.revokeObjectURL(link.href);
-        showToast('导出成功', 'success');
+        if (format === 'pdf') {
+            const saved = res.headers.get('X-PaperInfo-PDF-Saved') || '0';
+            const skipped = res.headers.get('X-PaperInfo-PDF-Skipped') || '0';
+            const failed = res.headers.get('X-PaperInfo-PDF-Failed') || '0';
+            const resultLabel = isSinglePdf ? 'PDF 下载成功' : 'PDF 压缩包生成成功';
+            showToast(
+                `${resultLabel}：成功 ${saved}，无地址 ${skipped}，失败 ${failed}`,
+                Number(failed) > 0 ? 'warning' : 'success'
+            );
+        } else {
+            showToast('导出成功', 'success');
+        }
     } catch (err) {
         showToast('导出失败: ' + err.message, 'error');
+    }
+}
+
+/**
+ * 将论文元数据写入当前运行的本地 Zotero。
+ */
+let zoteroExportInProgress = false;
+const ZOTERO_LAST_TARGET_KEY = 'paperinfo_zotero_last_target';
+
+async function chooseZoteroTarget() {
+    let response;
+    try {
+        response = await fetch('/api/zotero/targets');
+    } catch (err) {
+        showToast('无法连接本地 Zotero: ' + err.message, 'error');
+        return null;
+    }
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.success) {
+        showToast(data.message || '无法读取 Zotero 分类', 'error');
+        return null;
+    }
+    if (!data.targets || data.targets.length === 0) {
+        showToast('Zotero 中没有可写入的资料库或分类', 'warning');
+        return null;
+    }
+
+    const select = document.getElementById('zoteroTargetSelect');
+    select.innerHTML = '';
+    data.targets.forEach(target => {
+        const option = document.createElement('option');
+        option.value = target.id;
+        const indent = '\u00a0\u00a0'.repeat(target.level || 0);
+        option.textContent = `${indent}${target.level ? '↳ ' : ''}${target.name}`;
+        select.appendChild(option);
+    });
+
+    const available = new Set(data.targets.map(target => target.id));
+    const previous = localStorage.getItem(ZOTERO_LAST_TARGET_KEY);
+    const defaultTarget = available.has(previous)
+        ? previous
+        : (available.has(data.selected_target) ? data.selected_target : data.targets[0].id);
+    select.value = defaultTarget;
+
+    const modalElement = document.getElementById('zoteroTargetModal');
+    const confirmButton = document.getElementById('zoteroTargetConfirm');
+    const modal = bootstrap.Modal.getOrCreateInstance(modalElement);
+
+    return new Promise(resolve => {
+        let selected = null;
+        const confirm = () => {
+            const target = data.targets.find(item => item.id === select.value);
+            if (!target) return;
+            selected = target;
+            localStorage.setItem(ZOTERO_LAST_TARGET_KEY, target.id);
+            modal.hide();
+        };
+        const hidden = () => {
+            confirmButton.removeEventListener('click', confirm);
+            modalElement.removeEventListener('hidden.bs.modal', hidden);
+            resolve(selected);
+        };
+        confirmButton.addEventListener('click', confirm);
+        modalElement.addEventListener('hidden.bs.modal', hidden);
+        modal.show();
+    });
+}
+
+async function sendToLocalZotero(payload) {
+    if (zoteroExportInProgress) {
+        showToast('Zotero 添加任务正在执行，请耐心等待', 'warning');
+        return;
+    }
+    const target = await chooseZoteroTarget();
+    if (!target) return;
+
+    zoteroExportInProgress = true;
+    try {
+        showToast(`正在下载 PDF 并写入“${target.name}”，请耐心等待...`, 'info');
+        const res = await fetch('/api/export/zotero', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({...payload, zotero_target: target.id})
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.success) {
+            showToast(data.message || '添加到 Zotero 失败', 'error');
+            return;
+        }
+        showToast(
+            data.message || '已添加到 Zotero',
+            data.pdf_failed > 0 ? 'warning' : 'success'
+        );
+    } catch (err) {
+        showToast('添加到 Zotero 失败: ' + err.message, 'error');
+    } finally {
+        zoteroExportInProgress = false;
     }
 }
 

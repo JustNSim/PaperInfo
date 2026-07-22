@@ -71,13 +71,39 @@
         <small class="text-muted">
             PaperInfo ·
             <a href="https://arxiv.org" target="_blank">arXiv</a> ·
-            <a href="https://dblp.org" target="_blank">DBLP</a> ·
-            <a href="https://www.semanticscholar.org" target="_blank">Semantic Scholar</a>
+            <a href="https://dblp.org" target="_blank">DBLP</a>
         </small>
     </footer>
 
     <!-- Toast 容器 -->
     <div id="toast-container" aria-live="polite"></div>
+
+    <!-- 本地 Zotero 分类选择 -->
+    <div class="modal fade" id="zoteroTargetModal" tabindex="-1" aria-labelledby="zoteroTargetModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="zoteroTargetModalLabel">
+                        <i class="bi bi-journal-plus"></i> 添加到本地 Zotero
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="关闭"></button>
+                </div>
+                <div class="modal-body">
+                    <label for="zoteroTargetSelect" class="form-label">保存到</label>
+                    <select class="form-select" id="zoteroTargetSelect"></select>
+                    <div class="alert alert-info small mt-3 mb-0">
+                        将逐篇下载 PDF 并保存为 Zotero 附件，论文较多时可能耗时较长。请保持 Zotero 运行并耐心等待。
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="button" class="btn btn-primary" id="zoteroTargetConfirm">
+                        <i class="bi bi-download"></i> 开始添加
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
 
     <!-- Bootstrap 5 JS -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>

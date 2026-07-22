@@ -115,14 +115,13 @@
                             <th class="text-end">论文数</th>
                             <th class="text-end">arXiv</th>
                             <th class="text-end">DBLP</th>
-                            <th class="text-end">S2</th>
                             <th class="text-end">平均相关度</th>
                             <th class="text-end">平均价值</th>
                             <th class="text-end">状态</th>
                         </tr>
                     </thead>
                     <tbody id="domainTable">
-                        <tr><td colspan="8" class="text-center text-muted py-3">加载中...</td></tr>
+                        <tr><td colspan="7" class="text-center text-muted py-3">加载中...</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -170,12 +169,12 @@ async function loadStats() {
             fillDomainTable(data.domains);
         } else {
             document.getElementById('domainTable').innerHTML =
-                '<tr><td colspan="8" class="text-center text-muted py-3">暂无领域数据</td></tr>';
+                '<tr><td colspan="7" class="text-center text-muted py-3">暂无领域数据</td></tr>';
         }
     } catch (error) {
         console.error('加载统计数据失败:', error);
         document.getElementById('domainTable').innerHTML =
-            '<tr><td colspan="8" class="text-center text-muted py-3">加载失败，请刷新重试</td></tr>';
+            '<tr><td colspan="7" class="text-center text-muted py-3">加载失败，请刷新重试</td></tr>';
     }
 }
 
@@ -352,7 +351,6 @@ function fillDomainTable(domains) {
             <td class="text-end fw-bold">${d.total}</td>
             <td class="text-end">${d.by_source.arxiv || 0}</td>
             <td class="text-end">${d.by_source.dblp || 0}</td>
-            <td class="text-end">${d.by_source.s2 || 0}</td>
             <td class="text-end">${d.avg_relevance !== null ? `<span class="badge bg-success">${d.avg_relevance}</span>` : '—'}</td>
             <td class="text-end">${d.avg_value !== null ? `<span class="badge bg-info">${d.avg_value}</span>` : '—'}</td>
             <td class="text-end">${d.enabled ? '<span class="badge bg-success">启用</span>' : '<span class="badge bg-secondary">停用</span>'}</td>

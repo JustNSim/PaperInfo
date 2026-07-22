@@ -311,11 +311,28 @@ class ArxivCrawler(BaseCrawler):
         try:
             # 提取作者
             authors = []
-            if hasattr(entry, 'authors'):
-                authors = [author.name for author in entry.authors]
+            author_affiliations = []
+            if entry.get('authors'):
+                for author in entry.get('authors', []):
+                    name = author.get('name', '')
+                    if not name:
+                        continue
+                    authors.append(name)
+                    affiliation = author.get('arxiv_affiliation') or author.get('affiliation')
+                    if affiliation:
+                        values = affiliation if isinstance(affiliation, list) else [affiliation]
+                        cleaned = [str(value).strip() for value in values if str(value).strip()]
+                        if cleaned:
+                            author_affiliations.append({
+                                'name': name,
+                                'affiliations': cleaned,
+                            })
             elif 'author' in entry:
                 # 某些版本的 feedparser 格式不同
-                authors = [author.get('name', '') for author in entry.get('author', [])]
+                for author in entry.get('author', []):
+                    name = author.get('name', '')
+                    if name:
+                        authors.append(name)
 
             # 提取 PDF 链接
             pdf_url = None
@@ -333,12 +350,12 @@ class ArxivCrawler(BaseCrawler):
             if 'published' in entry:
                 try:
                     published_date = datetime.strptime(
-                        entry.published, '%Y-%m-%dT%H:%M:%SZ'
+                        entry.get('published'), '%Y-%m-%dT%H:%M:%SZ'
                     )
                 except ValueError:
                     try:
                         published_date = datetime.strptime(
-                            entry.published, '%Y-%m-%dT%H:%M:%S.%fZ'
+                            entry.get('published'), '%Y-%m-%dT%H:%M:%S.%fZ'
                         )
                     except ValueError:
                         pass
@@ -351,9 +368,11 @@ class ArxivCrawler(BaseCrawler):
             return {
                 'title': entry.get('title', '').strip(),
                 'authors': authors,
+                'author_affiliations': author_affiliations,
                 'abstract': summary,
                 'source': 'arxiv',
                 'source_id': arxiv_id,
+                'doi': f'10.48550/arXiv.{self._extract_base_id(arxiv_id)}',
                 'year': published_date.year if published_date else None,
                 'venue': 'arXiv',
                 'url': entry.get('id', ''),
@@ -364,6 +383,12 @@ class ArxivCrawler(BaseCrawler):
         except Exception as e:
             logger.warning(f"解析 arXiv 条目失败: {e}")
             return None
+
+    @staticmethod
+    def _extract_base_id(arxiv_id: str) -> str:
+        """Remove the optional arXiv version suffix from an identifier."""
+        import re
+        return re.sub(r'v\d+$', '', arxiv_id or '', flags=re.IGNORECASE)
 
     def normalize_paper(self, raw_paper: Dict[str, Any], source: str = 'arxiv') -> Dict[str, Any]:
         """标准化论文数据（已集成在 _parse_entry 中）"""

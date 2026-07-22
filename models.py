@@ -2,6 +2,7 @@
 PaperInfo 数据库模型
 """
 from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy import inspect, text
 from datetime import datetime, timezone, timedelta
 
 db = SQLAlchemy()
@@ -105,9 +106,14 @@ class Paper(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     title = db.Column(db.String(500), nullable=False, index=True)
     authors = db.Column(db.JSON, default=list, nullable=False)
+    author_affiliations = db.Column(db.JSON, default=list)
+    affiliations_source = db.Column(db.String(30))
+    affiliations_status = db.Column(db.String(20))
+    affiliations_fetched_at = db.Column(db.DateTime)
     abstract = db.Column(db.Text)
     source = db.Column(db.String(50), nullable=False, index=True)  # arxiv, dblp, ccs等
     source_id = db.Column(db.String(100), index=True)  # 原始数据源的ID
+    doi = db.Column(db.String(300))
     year = db.Column(db.Integer, index=True)
     venue = db.Column(db.String(200))  # 会议/期刊名称
     url = db.Column(db.String(500))
@@ -139,9 +145,18 @@ class Paper(db.Model):
             'id': self.id,
             'title': self.title,
             'authors': self.authors,
+            'author_affiliations': self.author_affiliations or [],
+            'affiliations': self.affiliation_names,
+            'affiliations_source': self.affiliations_source,
+            'affiliations_status': self.affiliations_status,
+            'affiliations_fetched_at': (
+                self.affiliations_fetched_at.isoformat()
+                if self.affiliations_fetched_at else None
+            ),
             'abstract': self.abstract,
             'source': self.source,
             'source_id': self.source_id,
+            'doi': self.doi,
             'year': self.year,
             'venue': self.venue,
             'url': self.url,
@@ -154,6 +169,20 @@ class Paper(db.Model):
             'llm_value_score': self.llm_value_score
         }
 
+    @property
+    def affiliation_names(self):
+        """Return unique institution names while preserving author order."""
+        names = []
+        seen = set()
+        for author in self.author_affiliations or []:
+            for affiliation in author.get('affiliations', []) or []:
+                normalized = str(affiliation).strip()
+                key = normalized.casefold()
+                if normalized and key not in seen:
+                    seen.add(key)
+                    names.append(normalized)
+        return names
+
     @staticmethod
     def exists_by_source_and_title(source: str, title: str) -> bool:
         """检查指定数据源下是否已存在该标题的论文"""
@@ -162,6 +191,31 @@ class Paper(db.Model):
                 db.and_(Paper.source == source, Paper.title == title)
             )
         ).scalar()
+
+
+def ensure_paper_schema():
+    """Add affiliation columns to existing SQLite databases without data loss."""
+    if 'papers' not in inspect(db.engine).get_table_names():
+        return
+    existing = {column['name'] for column in inspect(db.engine).get_columns('papers')}
+    additions = {
+        'author_affiliations': 'ALTER TABLE papers ADD COLUMN author_affiliations JSON',
+        'affiliations_source': 'ALTER TABLE papers ADD COLUMN affiliations_source VARCHAR(30)',
+        'affiliations_status': 'ALTER TABLE papers ADD COLUMN affiliations_status VARCHAR(20)',
+        'affiliations_fetched_at': 'ALTER TABLE papers ADD COLUMN affiliations_fetched_at DATETIME',
+        'doi': 'ALTER TABLE papers ADD COLUMN doi VARCHAR(300)',
+    }
+    with db.engine.begin() as connection:
+        for column, statement in additions.items():
+            if column not in existing:
+                connection.execute(text(statement))
+        connection.execute(text(
+            'CREATE INDEX IF NOT EXISTS idx_papers_affiliations_status '
+            'ON papers (affiliations_status)'
+        ))
+        connection.execute(text(
+            'CREATE INDEX IF NOT EXISTS idx_papers_doi ON papers (doi)'
+        ))
 
 
 class ReadHistory(db.Model):

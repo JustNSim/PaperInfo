@@ -62,10 +62,6 @@ class Config:
     # 爬虫配置
     ARXIV_DELAY = 4                 # arXiv API 请求间隔（秒）
     DBLP_DELAY = 3                  # DBLP API 请求间隔（秒）
-    S2_DELAY = 5                    # Semantic Scholar API 请求间隔（秒）
-    # S2 API Key 轮换：注册 https://www.semanticscholar.org/product/api#api-key-form 获取免费 Key
-    # 多个 Key 逗号分隔，轮换使用（每个 Key 独立限流）
-    S2_API_KEYS = [k.strip() for k in os.environ.get('S2_API_KEYS', '').split(',') if k.strip()]
     MAX_PAPERS_PER_SOURCE = 300     # 每个数据源最大抓取论文数（提高到300以支持分批查询）
     REQUEST_TIMEOUT = 30            # 请求超时时间（秒）
     # 各来源使用独立超时/重试预算。一次失败后会在本轮更新内熔断，避免跨领域重复等待。
@@ -73,8 +69,24 @@ class Config:
     ARXIV_MAX_RETRIES = int(os.environ.get('ARXIV_MAX_RETRIES', '1'))
     DBLP_REQUEST_TIMEOUT = int(os.environ.get('DBLP_REQUEST_TIMEOUT', '15'))
     DBLP_MAX_RETRIES = int(os.environ.get('DBLP_MAX_RETRIES', '1'))
-    S2_REQUEST_TIMEOUT = int(os.environ.get('S2_REQUEST_TIMEOUT', '20'))
-    S2_MAX_RETRIES = int(os.environ.get('S2_MAX_RETRIES', '2'))
+    # 作者单位补全：OpenAlex API Key 免费，但从 2026 年起为必填。
+    OPENALEX_API_KEY = _get_system_environment('PAPERINFO_OPENALEX_API_KEY')
+    OPENALEX_DELAY = float(os.environ.get('OPENALEX_DELAY', '0.5'))
+    OPENALEX_REQUEST_TIMEOUT = int(os.environ.get('OPENALEX_REQUEST_TIMEOUT', '20'))
+    OPENALEX_MAX_RETRIES = int(os.environ.get('OPENALEX_MAX_RETRIES', '2'))
+    # Zotero 桌面端本地 Connector API；无需云端账号或 API Key。
+    ZOTERO_LOCAL_URL = os.environ.get('ZOTERO_LOCAL_URL', 'http://127.0.0.1:23119')
+    ZOTERO_LOCAL_TIMEOUT = int(os.environ.get('ZOTERO_LOCAL_TIMEOUT', '15'))
+    # ZIP 下载与 Zotero 附件共用，兼容已经设置的旧 ZOTERO_* 变量名。
+    PDF_DOWNLOAD_TIMEOUT = int(os.environ.get(
+        'PDF_DOWNLOAD_TIMEOUT', os.environ.get('ZOTERO_PDF_DOWNLOAD_TIMEOUT', '60')
+    ))
+    PDF_DOWNLOAD_DELAY = float(os.environ.get(
+        'PDF_DOWNLOAD_DELAY', os.environ.get('ZOTERO_PDF_DOWNLOAD_DELAY', '1.0')
+    ))
+    PDF_MAX_MB = int(os.environ.get(
+        'PDF_MAX_MB', os.environ.get('ZOTERO_PDF_MAX_MB', '50')
+    ))
 
     # DBLP 时间窗口（DBLP 论文批量入库，不适合增量更新）
     DBLP_YEAR_WINDOW = int(os.environ.get('DBLP_YEAR_WINDOW', '3'))  # 查最近 N 年的论文

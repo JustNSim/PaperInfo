@@ -1,9 +1,17 @@
 import unittest
-from datetime import datetime
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from notification_service import build_update_message, send_update_notification
+from flask import Flask
+
+from models import Domain, Paper, db
+from notification_service import (
+    _abstract_summary,
+    _recent_new_papers,
+    build_update_card,
+    send_update_notification,
+)
 
 
 def make_update_log(**overrides):
@@ -15,7 +23,12 @@ def make_update_log(**overrides):
         'total_new': 7,
         'source_stats': {'arxiv': 5, 'dblp': 2},
         'llm_filtered': 3,
-        'operation_details': {'duration_seconds': 12.5, 'source_failures': {}},
+        'operation_details': {
+            'started_at': datetime(2026, 7, 21, 2, 0, 0).isoformat(),
+            'duration_seconds': 12.5,
+            'source_failures': {},
+        },
+        'domains_processed': [1],
         'error_message': None,
     }
     values.update(overrides)
@@ -23,18 +36,86 @@ def make_update_log(**overrides):
 
 
 class NotificationServiceTests(unittest.TestCase):
-    def test_build_update_message_contains_result_summary(self):
-        with patch('notification_service.Config.PAPERINFO_PUBLIC_URL', 'http://paperinfo.local:5000'):
-            message = build_update_message(make_update_log(), ['区块链', '软件工程'])
+    @patch('notification_service._recent_new_papers')
+    def test_build_card_contains_at_most_five_linked_papers(self, recent_papers):
+        recent_papers.return_value = [
+            SimpleNamespace(
+                title=f'Paper {index}',
+                url=f'https://example.test/paper/{index}',
+                source='arxiv',
+                llm_score=90 - index,
+                llm_value_score=80 - index,
+                published_date=datetime(2026, 7, index),
+                abstract='A' * 120,
+            )
+            for index in range(1, 7)
+        ]
+        card = build_update_card(make_update_log(), ['区块链'])
+        contents = '\n'.join(
+            element['text']['content']
+            for element in card['elements']
+            if element.get('tag') == 'div'
+        )
 
-        self.assertIn('PaperInfo 定时更新成功', message)
-        self.assertIn('新增：7 篇', message)
-        self.assertIn('arXiv 5 篇、DBLP 2 篇', message)
-        self.assertIn('领域：区块链、软件工程', message)
-        self.assertIn('http://paperinfo.local:5000/?update_log=42', message)
+        self.assertEqual('PaperInfo 更新成功', card['header']['title']['content'])
+        self.assertIn('新增 7 篇｜arXiv 5｜DBLP 2｜耗时 12.5 秒', contents)
+        self.assertIn('[Paper 1](https://example.test/paper/1)', contents)
+        self.assertIn('arXiv｜相关 89｜价值 79｜07-01', contents)
+        self.assertIn('5. [Paper 5]', contents)
+        self.assertNotIn('Paper 6', contents)
+        self.assertIn('另有 2 篇', contents)
+        recent_papers.assert_called_once_with(make_update_log(), limit=5)
+
+    def test_abstract_summary_is_single_line_and_at_most_100_chars(self):
+        summary = _abstract_summary(('word\n' * 40) + 'tail')
+        self.assertNotIn('\n', summary)
+        self.assertLessEqual(len(summary), 100)
+        self.assertTrue(summary.endswith('…'))
+
+    def test_recent_papers_use_started_at_end_time_and_domain(self):
+        app = Flask(__name__)
+        app.config.update(
+            SQLALCHEMY_DATABASE_URI='sqlite://',
+            SQLALCHEMY_TRACK_MODIFICATIONS=False,
+        )
+        db.init_app(app)
+        started_at = datetime(2026, 7, 21, 2, 0, 0)
+        ended_at = datetime(2026, 7, 21, 2, 30, 0)
+
+        with app.app_context():
+            db.create_all()
+            domain = Domain(name='目标领域', keywords=[])
+            other_domain = Domain(name='其他领域', keywords=[])
+            db.session.add_all([domain, other_domain])
+            db.session.commit()
+            db.session.add_all([
+                Paper(title='本批次论文', authors=[], source='arxiv', domain_id=domain.id,
+                      fetched_date=started_at + timedelta(minutes=10), llm_score=90),
+                Paper(title='开始前论文', authors=[], source='arxiv', domain_id=domain.id,
+                      fetched_date=started_at - timedelta(seconds=1), llm_score=99),
+                Paper(title='其他领域论文', authors=[], source='arxiv', domain_id=other_domain.id,
+                      fetched_date=started_at + timedelta(minutes=10), llm_score=100),
+            ])
+            db.session.commit()
+
+            update_log = make_update_log(
+                trigger_time=ended_at,
+                total_new=1,
+                domains_processed=[domain.id],
+                operation_details={
+                    'started_at': started_at.isoformat(),
+                    'duration_seconds': 1800,
+                    'source_failures': {},
+                },
+            )
+            papers = _recent_new_papers(update_log)
+            self.assertEqual(['本批次论文'], [paper.title for paper in papers])
+            db.session.remove()
+            db.drop_all()
 
     @patch('notification_service.requests.post')
-    def test_send_notification_posts_signed_text_payload(self, post):
+    @patch('notification_service._recent_new_papers', return_value=[])
+    def test_send_notification_posts_signed_card_payload(self, _recent_papers, post):
         response = Mock()
         response.raise_for_status.return_value = None
         response.json.return_value = {'code': 0}
@@ -48,7 +129,9 @@ class NotificationServiceTests(unittest.TestCase):
 
         self.assertTrue(sent)
         payload = post.call_args.kwargs['json']
-        self.assertEqual('text', payload['msg_type'])
+        self.assertEqual('interactive', payload['msg_type'])
+        self.assertIn('card', payload)
+        self.assertNotIn('content', payload)
         self.assertEqual('1234567890', payload['timestamp'])
         self.assertTrue(payload['sign'])
         self.assertEqual(6, post.call_args.kwargs['timeout'])

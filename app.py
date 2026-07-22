@@ -3,19 +3,33 @@ PaperInfo - 论文调研工具
 主应用入口
 """
 import os
+import io
 import json
 import queue
 import threading
 import logging
+import tempfile
 from datetime import datetime, timedelta
 from urllib.parse import urlencode
-from flask import Flask, render_template, request, jsonify, Response, stream_with_context
+from flask import Flask, render_template, request, jsonify, Response, stream_with_context, send_file
 from sqlalchemy.exc import IntegrityError
 
 from config import Config, config
-from models import db, Domain, Paper, UpdateLog, ReadHistory, get_beijing_time
+from models import db, Domain, Paper, UpdateLog, ReadHistory, get_beijing_time, ensure_paper_schema
 from scheduler import setup_scheduler, manual_trigger_fetch, get_next_run_time, _evaluate_single_paper
 from translation_service import TranslationError, TranslationService
+from affiliation_service import (
+    get_affiliation_backfill_status,
+    init_affiliation_service,
+    start_affiliation_backfill,
+)
+from zotero_service import ZoteroLocalClient, ZoteroLocalError
+from pdf_service import (
+    PDFDownloader,
+    PDFDownloadError,
+    safe_single_pdf_filename,
+    write_papers_pdf_zip,
+)
 
 # 创建应用日志
 logger = logging.getLogger(__name__)
@@ -57,8 +71,11 @@ def create_app(config_name='default'):
     # 创建数据库表
     with app.app_context():
         db.create_all()
+        ensure_paper_schema()
         # 初始化默认领域
         _init_default_domains()
+
+    init_affiliation_service(app)
 
     # 设置定时任务
     setup_scheduler(app)
@@ -367,7 +384,7 @@ def register_routes(app):
         per_page = request.args.get('per_page', Config.PAPERS_PER_PAGE, type=int)
         domain_id = request.args.get('domain', type=int)
         sort_by = request.args.get('sort', 'date')  # date, score_asc, score_desc
-        sources = request.args.getlist('source')  # arxiv, dblp, s2
+        sources = request.args.getlist('source')  # arxiv, dblp
         days = request.args.get('days', type=int)
 
         query = Paper.query
@@ -547,6 +564,119 @@ def register_routes(app):
             mimetype='application/x-bibtex; charset=utf-8',
             headers={'Content-Disposition': f'attachment; filename={filename}'}
         )
+
+    @app.route('/api/export/zotero', methods=['POST'])
+    def api_export_zotero():
+        """Add selected papers to the running local Zotero desktop client."""
+        data = request.get_json() or {}
+        papers = _selection_query(data).order_by(Paper.id.asc()).all()
+        if not papers:
+            return jsonify({'success': False, 'message': '没有可添加到 Zotero 的论文'}), 400
+
+        client = ZoteroLocalClient()
+        try:
+            result = client.save_papers(
+                papers,
+                target_id=data.get('zotero_target'),
+            )
+            version_text = (
+                f'（Zotero {result["zotero_version"]}）'
+                if result.get('zotero_version') else ''
+            )
+            return jsonify({
+                'success': True,
+                'message': (
+                    f'已添加 {result["saved"]} 篇论文到“'
+                    f'{result.get("target_name") or "当前分类"}”{version_text}；'
+                    f'PDF 成功 {result["pdf_saved"]}，'
+                    f'无地址跳过 {result["pdf_skipped"]}，'
+                    f'失败 {result["pdf_failed"]}'
+                ),
+                **result,
+            })
+        except ZoteroLocalError as exc:
+            return jsonify({'success': False, 'message': str(exc)}), 503
+        finally:
+            client.close()
+
+    @app.route('/api/export/pdf', methods=['POST'])
+    def api_export_pdf():
+        """Download one PDF directly, or multiple PDFs as a ZIP archive."""
+        data = request.get_json() or {}
+        papers = _selection_query(data).order_by(Paper.id.asc()).all()
+        if not papers:
+            return jsonify({'success': False, 'message': '没有可下载 PDF 的论文'}), 400
+
+        if len(papers) == 1:
+            paper = papers[0]
+            if not paper.pdf_url:
+                return jsonify({
+                    'success': False,
+                    'message': '该论文没有 PDF 地址',
+                }), 400
+            downloader = PDFDownloader()
+            try:
+                content = downloader.download(paper.pdf_url)
+            except PDFDownloadError as exc:
+                return jsonify({
+                    'success': False,
+                    'message': str(exc),
+                }), 502
+            finally:
+                downloader.close()
+            response = send_file(
+                io.BytesIO(content),
+                mimetype='application/pdf',
+                as_attachment=True,
+                download_name=safe_single_pdf_filename(paper),
+            )
+            response.headers['X-PaperInfo-PDF-Saved'] = '1'
+            response.headers['X-PaperInfo-PDF-Skipped'] = '0'
+            response.headers['X-PaperInfo-PDF-Failed'] = '0'
+            return response
+
+        archive = tempfile.SpooledTemporaryFile(max_size=32 * 1024 * 1024, mode='w+b')
+        downloader = PDFDownloader()
+        try:
+            result = write_papers_pdf_zip(papers, archive, downloader)
+            if result['pdf_saved'] == 0:
+                archive.close()
+                return jsonify({
+                    'success': False,
+                    'message': (
+                        f'没有成功下载 PDF；无地址 {result["pdf_skipped"]}，'
+                        f'失败 {result["pdf_failed"]}'
+                    ),
+                }), 502
+            archive.seek(0)
+            filename = f"papers_pdf_{datetime.now().strftime('%Y%m%d')}.zip"
+            response = send_file(
+                archive,
+                mimetype='application/zip',
+                as_attachment=True,
+                download_name=filename,
+            )
+            response.headers['X-PaperInfo-PDF-Saved'] = str(result['pdf_saved'])
+            response.headers['X-PaperInfo-PDF-Skipped'] = str(result['pdf_skipped'])
+            response.headers['X-PaperInfo-PDF-Failed'] = str(result['pdf_failed'])
+            response.call_on_close(archive.close)
+            return response
+        except Exception:
+            archive.close()
+            raise
+        finally:
+            downloader.close()
+
+    @app.route('/api/zotero/targets')
+    def api_zotero_targets():
+        """List writable local Zotero libraries and collections."""
+        client = ZoteroLocalClient()
+        try:
+            return jsonify({'success': True, **client.get_save_targets()})
+        except ZoteroLocalError as exc:
+            return jsonify({'success': False, 'message': str(exc)}), 503
+        finally:
+            client.close()
 
     @app.route('/api/domains', methods=['GET'])
     def api_domains():
@@ -1065,7 +1195,7 @@ def register_routes(app):
         }
 
         # 按数据源统计（整体）
-        for source in ['arxiv', 'dblp', 's2']:
+        for source in ['arxiv', 'dblp']:
             stats['by_source'][source] = Paper.query.filter_by(source=source).count()
 
         # 按年份统计（整体）
@@ -1132,7 +1262,7 @@ def register_routes(app):
 
             # 按数据源统计
             by_source = {}
-            for source in ['arxiv', 'dblp', 's2']:
+            for source in ['arxiv', 'dblp']:
                 by_source[source] = domain_papers.filter_by(source=source).count()
 
             # 按年份统计
@@ -1195,6 +1325,26 @@ def register_routes(app):
             'next_run': next_run.isoformat() if next_run else None,
             'schedule_hour': Config.SCHEDULE_HOUR,
             'schedule_minute': Config.SCHEDULE_MINUTE
+        })
+
+    @app.route('/api/affiliations/backfill', methods=['POST'])
+    def api_backfill_affiliations():
+        """Start a rate-limited background affiliation backfill."""
+        started, message = start_affiliation_backfill()
+        status_code = 202 if started else 409
+        if not Config.OPENALEX_API_KEY:
+            status_code = 503
+        return jsonify({
+            'success': started,
+            'message': message,
+            'status': get_affiliation_backfill_status(),
+        }), status_code
+
+    @app.route('/api/affiliations/backfill/status')
+    def api_affiliation_backfill_status():
+        return jsonify({
+            'configured': bool(Config.OPENALEX_API_KEY),
+            **get_affiliation_backfill_status(),
         })
 
     @app.route('/api/translate', methods=['POST'])
