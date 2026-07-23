@@ -1,5 +1,6 @@
 import unittest
 from datetime import datetime, timedelta
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import scheduler
@@ -22,6 +23,24 @@ class SchedulerSafetyTests(unittest.TestCase):
             deadline = scheduler._catch_up_grace_deadline(scheduled)
 
         self.assertEqual(scheduled + timedelta(minutes=30), deadline)
+
+    def test_source_failure_marks_update_as_partial(self):
+        self.assertEqual('success', scheduler._completion_status({}))
+        self.assertEqual(
+            'partial',
+            scheduler._completion_status({'dblp': 'all endpoints failed'}),
+        )
+
+    def test_source_failure_uses_dblp_missing_cache_reason(self):
+        crawler = SimpleNamespace(
+            source_failure_reason='unavailable streams: db/conf/ccs/index',
+            circuit_open=False,
+            circuit_reason=None,
+        )
+
+        failures = scheduler._source_failure_details({'dblp': crawler})
+
+        self.assertIn('unavailable streams', failures['dblp'])
 
 
 if __name__ == '__main__':

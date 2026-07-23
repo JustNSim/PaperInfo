@@ -52,6 +52,25 @@ class CrawlerCircuitBreakerTests(unittest.TestCase):
         self.assertFalse(crawler.circuit_open)
         crawler.close()
 
+    def test_503_uses_source_specific_longer_backoff(self):
+        crawler = DummyCrawler(
+            delay=0,
+            timeout=1,
+            max_retries=1,
+            server_retry_after_default=10,
+        )
+        unavailable = Mock(status_code=503, headers={})
+        success = Mock(status_code=200, headers={})
+        crawler._session.get = Mock(side_effect=[unavailable, success])
+
+        with patch('crawler.base.time.sleep') as sleep:
+            result = crawler._make_request('https://example.test/api')
+
+        self.assertIs(success, result)
+        sleep.assert_called_once_with(10)
+        self.assertFalse(crawler.circuit_open)
+        crawler.close()
+
 
 if __name__ == '__main__':
     unittest.main()

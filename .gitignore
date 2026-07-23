@@ -48,4 +48,5 @@ Thumbs.db
 # Data
 data/*.db
 data/*.sqlite
+data/dblp_cache/
 logs/*.log

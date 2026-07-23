@@ -572,6 +572,19 @@ body {
     gap: 4px;
 }
 
+.pagination-bar {
+    margin-top: 1.5rem;
+}
+
+.pagination-bar .pagination {
+    margin-top: 0;
+}
+
+.page-jump-input {
+    width: 4.8rem;
+    text-align: center;
+}
+
 .page-link {
     border-radius: var(--radius-sm) !important;
     margin: 0;

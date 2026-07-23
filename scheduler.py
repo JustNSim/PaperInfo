@@ -15,7 +15,10 @@ import threading
 from config import Config
 from models import db, Domain, Paper, UpdateLog
 from crawler import ArxivCrawler, DBLPCrawler
-from affiliation_service import enqueue_affiliation_enrichment
+from affiliation_service import (
+    enqueue_affiliation_enrichment,
+    enqueue_due_metadata_retries,
+)
 from llm import LLMEvaluator, LLMEvaluatorError
 from models import get_beijing_time
 from notification_service import send_update_notification
@@ -215,7 +218,7 @@ def _get_fetch_date_range(domain: Domain):
         try:
             successful_logs = UpdateLog.query.filter(
                 UpdateLog.trigger_type.in_(['scheduled', 'manual', 'catch_up']),
-                UpdateLog.status == 'success'
+                UpdateLog.status.in_(['success', 'partial'])
             ).order_by(UpdateLog.trigger_time.desc()).all()
 
             last_domain_log = next(
@@ -248,7 +251,7 @@ def _get_fetch_date_range(domain: Domain):
     return from_date, to_date
 
 
-def _create_source_crawlers() -> dict:
+def _create_source_crawlers(domains=None) -> dict:
     """为一次更新创建共享客户端，统一限速并支持跨领域熔断。"""
     crawlers = {
         'arxiv': ArxivCrawler(
@@ -262,8 +265,13 @@ def _create_source_crawlers() -> dict:
             timeout=Config.DBLP_REQUEST_TIMEOUT,
             max_results=Config.MAX_PAPERS_PER_SOURCE,
             max_retries=Config.DBLP_MAX_RETRIES,
+            base_urls=Config.DBLP_BASE_URLS,
+            cache_dir=Config.DBLP_CACHE_DIR,
+            cache_ttl_hours=Config.DBLP_CACHE_TTL_HOURS,
+            stale_cache_days=Config.DBLP_STALE_CACHE_DAYS,
         ),
     }
+    crawlers['dblp'].prepare_domains(domains or [])
     return crawlers
 
 
@@ -276,11 +284,19 @@ def _close_source_crawlers(crawlers: dict):
 
 
 def _source_failure_details(crawlers: dict) -> dict:
-    return {
-        source: crawler.circuit_reason
-        for source, crawler in (crawlers or {}).items()
-        if crawler.circuit_open
-    }
+    failures = {}
+    for source, crawler in (crawlers or {}).items():
+        reason = getattr(crawler, 'source_failure_reason', None)
+        if reason is None and crawler.circuit_open:
+            reason = crawler.circuit_reason
+        if reason:
+            failures[source] = reason
+    return failures
+
+
+def _completion_status(source_failures: dict) -> str:
+    """任一来源整轮不可用时，整体任务应明确标记为部分成功。"""
+    return 'partial' if source_failures else 'success'
 
 
 def fetch_papers_for_domain(domain: Domain, source_crawlers: dict = None) -> dict:
@@ -556,6 +572,7 @@ def _save_papers(papers: list, domain: Domain) -> int:
             affiliations_status=('success' if paper_data.get('author_affiliations') else 'pending'),
             affiliations_fetched_at=(get_beijing_time() if paper_data.get('author_affiliations') else None),
             abstract=paper_data.get('abstract'),
+            abstract_source=(paper_data['source'] if paper_data.get('abstract') else None),
             source=paper_data['source'],
             source_id=paper_data.get('source_id'),
             doi=paper_data.get('doi'),
@@ -563,6 +580,8 @@ def _save_papers(papers: list, domain: Domain) -> int:
             venue=paper_data.get('venue'),
             url=paper_data.get('url'),
             pdf_url=paper_data.get('pdf_url'),
+            pdf_source=(paper_data['source'] if paper_data.get('pdf_url') else None),
+            metadata_retry_count=0,
             published_date=paper_data.get('published_date'),
             domain_id=domain.id,
             llm_score=result.get('llm_score'),
@@ -725,7 +744,7 @@ def scheduled_fetch_job():
                     return
 
                 logger.info(f"找到 {len(domains)} 个启用的领域")
-                source_crawlers = _create_source_crawlers()
+                source_crawlers = _create_source_crawlers(domains)
 
                 for domain in domains:
                     result = fetch_papers_for_domain(domain, source_crawlers)
@@ -746,14 +765,16 @@ def scheduled_fetch_job():
                     logger.info(f"LLM 过滤了 {llm_filtered_count} 篇不相关论文")
                 logger.info("=" * 50)
 
+                source_failures = _source_failure_details(source_crawlers)
+                update_status = _completion_status(source_failures)
                 _create_update_log(
                     'scheduled', total_new, all_source_stats,
-                    [d.id for d in domains], 'success',
+                    [d.id for d in domains], update_status,
                     llm_filtered=llm_filtered_count,
                     operation_details={
                         'started_at': started_at.isoformat(),
                         'duration_seconds': duration_seconds,
-                        'source_failures': _source_failure_details(source_crawlers),
+                        'source_failures': source_failures,
                     },
                 )
 
@@ -799,6 +820,7 @@ def manual_trigger_fetch(domain_id: int = None, trigger_type: str = 'manual') ->
 
     result = {
         'success': True,
+        'status': 'success',
         'new_papers': 0,
         'domains_processed': 0,
         'source_stats': {},
@@ -821,7 +843,7 @@ def manual_trigger_fetch(domain_id: int = None, trigger_type: str = 'manual') ->
             return result
 
         domain_ids = []
-        source_crawlers = _create_source_crawlers()
+        source_crawlers = _create_source_crawlers(domains)
         for domain in domains:
             domain_result = fetch_papers_for_domain(domain, source_crawlers)
             result['new_papers'] += domain_result.get('new_count', 0)
@@ -832,10 +854,15 @@ def manual_trigger_fetch(domain_id: int = None, trigger_type: str = 'manual') ->
                 result['source_stats'][source] = result['source_stats'].get(source, 0) + count
 
         result['llm_filtered'] = llm_filtered_count
+        source_failures = _source_failure_details(source_crawlers)
+        result['status'] = _completion_status(source_failures)
         if Config.LLM_FILTER_ENABLED and llm_filtered_count > 0:
             result['message'] = f'成功处理 {result["domains_processed"]} 个领域，新增 {result["new_papers"]} 篇论文（LLM 过滤了 {llm_filtered_count} 篇）'
         else:
             result['message'] = f'成功处理 {result["domains_processed"]} 个领域，新增 {result["new_papers"]} 篇论文'
+        if source_failures:
+            failed_sources = '、'.join(source.upper() for source in source_failures)
+            result['message'] = f'部分完成：{result["message"]}；{failed_sources} 来源失败'
 
         # 记录更新日志
         duration_seconds = round(
@@ -843,11 +870,11 @@ def manual_trigger_fetch(domain_id: int = None, trigger_type: str = 'manual') ->
         )
         _create_update_log(
             trigger_type, result['new_papers'], result['source_stats'], domain_ids,
-            'success', llm_filtered=llm_filtered_count,
+            result['status'], llm_filtered=llm_filtered_count,
             operation_details={
                 'started_at': started_at.isoformat(),
                 'duration_seconds': duration_seconds,
-                'source_failures': _source_failure_details(source_crawlers),
+                'source_failures': source_failures,
             },
         )
 
@@ -896,7 +923,7 @@ def check_and_catch_up():
             # 防重复：检查最近 30 分钟内是否有任何更新记录（包括手动触发的）
             recent_update = UpdateLog.query.filter(
                 UpdateLog.trigger_type.in_(['scheduled', 'manual', 'catch_up']),
-                UpdateLog.status == 'success',
+                UpdateLog.status.in_(['success', 'partial']),
                 UpdateLog.trigger_time > now - timedelta(minutes=30)
             ).first()
             if recent_update:
@@ -928,7 +955,7 @@ def check_and_catch_up():
             # 成功的定时任务或补执行都表示当天计划已完成。
             last_scheduled_update = UpdateLog.query.filter(
                 UpdateLog.trigger_type.in_(['scheduled', 'catch_up']),
-                UpdateLog.status == 'success'
+                UpdateLog.status.in_(['success', 'partial'])
             ).order_by(UpdateLog.trigger_time.desc()).first()
 
             should_catch_up = False
@@ -1085,6 +1112,16 @@ def setup_scheduler(app=None):
             replace_existing=True
         )
         logger.info("已安排补执行检查任务（启动时 + 每5分钟）")
+
+    if app is not None:
+        scheduler.add_job(
+            enqueue_due_metadata_retries,
+            trigger=CronTrigger(hour='4,10,16,22', minute=15),
+            id='metadata_retry',
+            name='论文元数据延迟重试',
+            replace_existing=True,
+        )
+        logger.info('已安排论文元数据延迟重试任务（每天 04:15/10:15/16:15/22:15）')
 
     return scheduler
 

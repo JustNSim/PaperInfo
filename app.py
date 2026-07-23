@@ -155,12 +155,41 @@ def _query_papers_by_filters(filters: dict):
     if update_log_id:
         log = UpdateLog.query.get(int(update_log_id))
         if log:
+            started_at, completed_at, domain_ids = _update_log_paper_scope(log)
             query = query.filter(
-                Paper.fetched_date >= log.trigger_time - timedelta(minutes=5),
-                Paper.fetched_date <= log.trigger_time + timedelta(minutes=5)
+                Paper.fetched_date >= started_at,
+                Paper.fetched_date <= completed_at,
             )
+            if domain_ids:
+                query = query.filter(Paper.domain_id.in_(domain_ids))
 
     return query
+
+
+def _update_log_paper_scope(update_log):
+    """Return the exact insertion window and domains for one update event."""
+    completed_at = update_log.trigger_time
+    details = update_log.operation_details or {}
+    if isinstance(details, str):
+        try:
+            details = json.loads(details)
+        except (TypeError, ValueError):
+            details = {}
+    started_at_value = details.get('started_at') if isinstance(details, dict) else None
+    try:
+        started_at = (
+            datetime.fromisoformat(started_at_value)
+            if isinstance(started_at_value, str)
+            else started_at_value
+        )
+    except (TypeError, ValueError):
+        started_at = None
+    if not isinstance(started_at, datetime):
+        # Compatibility fallback for old update logs that predate started_at.
+        started_at = completed_at - timedelta(minutes=5)
+        completed_at = completed_at + timedelta(minutes=5)
+    domain_ids = list(update_log.domains_processed or [])
+    return started_at, completed_at, domain_ids
 
 
 def _selection_query(data: dict):
@@ -220,12 +249,17 @@ def register_routes(app):
         if update_log_id:
             selected_update_log = UpdateLog.query.get(update_log_id)
             if selected_update_log:
-                # 使用该更新日志的时间范围筛选论文
-                update_time = selected_update_log.trigger_time
-                query = query.filter(
-                    Paper.fetched_date >= update_time - timedelta(minutes=5),
-                    Paper.fetched_date <= update_time + timedelta(minutes=5)
+                # Use the task's real lifetime; long updates can exceed the old
+                # fixed five-minute window by a wide margin.
+                started_at, completed_at, update_domain_ids = _update_log_paper_scope(
+                    selected_update_log
                 )
+                query = query.filter(
+                    Paper.fetched_date >= started_at,
+                    Paper.fetched_date <= completed_at,
+                )
+                if update_domain_ids:
+                    query = query.filter(Paper.domain_id.in_(update_domain_ids))
 
         # 领域过滤
         if domain_id:
@@ -286,7 +320,7 @@ def register_routes(app):
         # 单元素数组，多领域一起更新的记录匹配不到，改为在 Python 侧判断
         recent_success_logs = UpdateLog.query.filter(
             UpdateLog.trigger_type.in_(['scheduled', 'manual', 'catch_up']),
-            UpdateLog.status == 'success'
+            UpdateLog.status.in_(['success', 'partial'])
         ).order_by(UpdateLog.trigger_time.desc()).limit(200).all()
 
         domain_last_updates = {}
@@ -325,7 +359,7 @@ def register_routes(app):
         # 因为论文按发布日期排序，而且新增 0 篇的任务不会产生新的 fetched_date。
         successful_update_logs = UpdateLog.query.filter(
             UpdateLog.trigger_type.in_(['scheduled', 'manual', 'catch_up']),
-            UpdateLog.status == 'success'
+            UpdateLog.status.in_(['success', 'partial'])
         ).order_by(UpdateLog.trigger_time.desc()).all()
         if domain_id:
             last_successful_update = next(
@@ -350,7 +384,7 @@ def register_routes(app):
         # 获取更新事件列表（用于筛选下拉框）
         update_logs = UpdateLog.query.filter(
             UpdateLog.trigger_type.in_(['scheduled', 'manual', 'catch_up']),
-            UpdateLog.status == 'success',
+            UpdateLog.status.in_(['success', 'partial']),
             UpdateLog.total_new > 0
         ).order_by(UpdateLog.trigger_time.desc()).limit(30).all()
 
@@ -1327,23 +1361,25 @@ def register_routes(app):
             'schedule_minute': Config.SCHEDULE_MINUTE
         })
 
+    @app.route('/api/metadata/backfill', methods=['POST'])
     @app.route('/api/affiliations/backfill', methods=['POST'])
     def api_backfill_affiliations():
-        """Start a rate-limited background affiliation backfill."""
+        """Start a rate-limited OpenAlex metadata backfill."""
         started, message = start_affiliation_backfill()
         status_code = 202 if started else 409
-        if not Config.OPENALEX_API_KEY:
-            status_code = 503
         return jsonify({
             'success': started,
             'message': message,
             'status': get_affiliation_backfill_status(),
         }), status_code
 
+    @app.route('/api/metadata/backfill/status')
     @app.route('/api/affiliations/backfill/status')
     def api_affiliation_backfill_status():
         return jsonify({
-            'configured': bool(Config.OPENALEX_API_KEY),
+            'configured': True,
+            'openalex_configured': bool(Config.OPENALEX_API_KEY),
+            'unpaywall_configured': bool(Config.UNPAYWALL_EMAIL),
             **get_affiliation_backfill_status(),
         })
 

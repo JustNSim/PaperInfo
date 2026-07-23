@@ -111,6 +111,7 @@ class Paper(db.Model):
     affiliations_status = db.Column(db.String(20))
     affiliations_fetched_at = db.Column(db.DateTime)
     abstract = db.Column(db.Text)
+    abstract_source = db.Column(db.String(30))
     source = db.Column(db.String(50), nullable=False, index=True)  # arxiv, dblp, ccs等
     source_id = db.Column(db.String(100), index=True)  # 原始数据源的ID
     doi = db.Column(db.String(300))
@@ -118,6 +119,10 @@ class Paper(db.Model):
     venue = db.Column(db.String(200))  # 会议/期刊名称
     url = db.Column(db.String(500))
     pdf_url = db.Column(db.String(500))
+    pdf_source = db.Column(db.String(30))
+    metadata_fetched_at = db.Column(db.DateTime)
+    metadata_retry_count = db.Column(db.Integer, default=0)
+    metadata_next_retry_at = db.Column(db.DateTime, index=True)
     published_date = db.Column(db.DateTime, index=True)
     fetched_date = db.Column(db.DateTime, default=get_beijing_time, index=True)
     is_favorite = db.Column(db.Boolean, default=False, index=True)  # 是否收藏
@@ -154,6 +159,7 @@ class Paper(db.Model):
                 if self.affiliations_fetched_at else None
             ),
             'abstract': self.abstract,
+            'abstract_source': self.abstract_source,
             'source': self.source,
             'source_id': self.source_id,
             'doi': self.doi,
@@ -161,6 +167,16 @@ class Paper(db.Model):
             'venue': self.venue,
             'url': self.url,
             'pdf_url': self.pdf_url,
+            'pdf_source': self.pdf_source,
+            'metadata_fetched_at': (
+                self.metadata_fetched_at.isoformat()
+                if self.metadata_fetched_at else None
+            ),
+            'metadata_retry_count': self.metadata_retry_count or 0,
+            'metadata_next_retry_at': (
+                self.metadata_next_retry_at.isoformat()
+                if self.metadata_next_retry_at else None
+            ),
             'published_date': self.published_date.isoformat() if self.published_date else None,
             'fetched_date': self.fetched_date.isoformat() if self.fetched_date else None,
             'domain_id': self.domain_id,
@@ -204,6 +220,11 @@ def ensure_paper_schema():
         'affiliations_status': 'ALTER TABLE papers ADD COLUMN affiliations_status VARCHAR(20)',
         'affiliations_fetched_at': 'ALTER TABLE papers ADD COLUMN affiliations_fetched_at DATETIME',
         'doi': 'ALTER TABLE papers ADD COLUMN doi VARCHAR(300)',
+        'abstract_source': 'ALTER TABLE papers ADD COLUMN abstract_source VARCHAR(30)',
+        'pdf_source': 'ALTER TABLE papers ADD COLUMN pdf_source VARCHAR(30)',
+        'metadata_fetched_at': 'ALTER TABLE papers ADD COLUMN metadata_fetched_at DATETIME',
+        'metadata_retry_count': 'ALTER TABLE papers ADD COLUMN metadata_retry_count INTEGER DEFAULT 0',
+        'metadata_next_retry_at': 'ALTER TABLE papers ADD COLUMN metadata_next_retry_at DATETIME',
     }
     with db.engine.begin() as connection:
         for column, statement in additions.items():
@@ -215,6 +236,26 @@ def ensure_paper_schema():
         ))
         connection.execute(text(
             'CREATE INDEX IF NOT EXISTS idx_papers_doi ON papers (doi)'
+        ))
+        connection.execute(text(
+            'CREATE INDEX IF NOT EXISTS idx_papers_metadata_next_retry_at '
+            'ON papers (metadata_next_retry_at)'
+        ))
+        if {'source', 'abstract'}.issubset(existing):
+            connection.execute(text(
+                "UPDATE papers SET abstract_source = source "
+                "WHERE abstract_source IS NULL AND abstract IS NOT NULL "
+                "AND trim(abstract) <> ''"
+            ))
+        if {'source', 'pdf_url'}.issubset(existing):
+            connection.execute(text(
+                "UPDATE papers SET pdf_source = source "
+                "WHERE pdf_source IS NULL AND pdf_url IS NOT NULL "
+                "AND trim(pdf_url) <> ''"
+            ))
+        connection.execute(text(
+            'UPDATE papers SET metadata_retry_count = 0 '
+            'WHERE metadata_retry_count IS NULL'
         ))
 
 

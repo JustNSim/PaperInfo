@@ -43,7 +43,7 @@
                             </thead>
                             <tbody>
                                 {% for log in logs %}
-                                <tr class="{% if log.status == 'failed' %}table-danger{% elif log.trigger_type == 'data_cleared' %}table-warning{% elif log.trigger_type == 'papers_deleted' %}table-secondary{% endif %}">
+                                <tr class="{% if log.status == 'failed' %}table-danger{% elif log.status == 'partial' %}table-warning{% elif log.trigger_type == 'data_cleared' %}table-warning{% elif log.trigger_type == 'papers_deleted' %}table-secondary{% endif %}">
                                     <td>
                                         <small>{{ log.trigger_time.strftime('%Y-%m-%d %H:%M:%S') }}</small>
                                     </td>
@@ -88,14 +88,14 @@
                                         {% elif log.status == 'failed' %}
                                         <span class="badge bg-danger">失败</span>
                                         {% elif log.status == 'partial' %}
-                                        <span class="badge bg-info">部分成功</span>
+                                        <span class="badge bg-warning text-dark">部分成功</span>
                                         {% endif %}
                                     </td>
                                     <td>
                                         {% if log.trigger_type in ['scheduled', 'manual', 'catch_up'] %}
                                         <small>
-                                            {% if log.status == 'success' %}
-                                            <span class="text-success">
+                                            {% if log.status in ['success', 'partial'] %}
+                                            <span class="{% if log.status == 'partial' %}text-warning{% else %}text-success{% endif %}">
                                                 <i class="bi bi-plus-circle"></i>
                                                 新增 {{ log.total_new|default(0) }} 篇
                                             </span>
@@ -114,7 +114,7 @@
                                             {% if log.operation_details and log.operation_details.source_failures %}
                                             <br><span class="text-warning">
                                                 <i class="bi bi-exclamation-triangle"></i>
-                                                本轮暂停来源：{{ log.operation_details.source_failures.keys()|join('、') }}
+                                                来源失败：{{ log.operation_details.source_failures.keys()|join('、') }}
                                             </span>
                                             {% endif %}
                                             {% elif log.status == 'failed' %}

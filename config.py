@@ -64,16 +64,48 @@ class Config:
     DBLP_DELAY = 3                  # DBLP API 请求间隔（秒）
     MAX_PAPERS_PER_SOURCE = 300     # 每个数据源最大抓取论文数（提高到300以支持分批查询）
     REQUEST_TIMEOUT = 30            # 请求超时时间（秒）
-    # 各来源使用独立超时/重试预算。一次失败后会在本轮更新内熔断，避免跨领域重复等待。
+    # 各来源使用独立超时/重试预算。
     ARXIV_REQUEST_TIMEOUT = int(os.environ.get('ARXIV_REQUEST_TIMEOUT', '20'))
     ARXIV_MAX_RETRIES = int(os.environ.get('ARXIV_MAX_RETRIES', '1'))
-    DBLP_REQUEST_TIMEOUT = int(os.environ.get('DBLP_REQUEST_TIMEOUT', '15'))
+    DBLP_REQUEST_TIMEOUT = int(os.environ.get('DBLP_REQUEST_TIMEOUT', '30'))
     DBLP_MAX_RETRIES = int(os.environ.get('DBLP_MAX_RETRIES', '1'))
+    DBLP_BASE_URLS = tuple(
+        value.strip()
+        for value in os.environ.get(
+            'DBLP_BASE_URLS',
+            'https://dblp.org,'
+            'https://dblp.uni-trier.de,'
+            'https://dblp.dagstuhl.de',
+        ).split(',')
+        if value.strip()
+    )
+    DBLP_CACHE_DIR = os.environ.get(
+        'DBLP_CACHE_DIR', os.path.join(BASE_DIR, 'data', 'dblp_cache')
+    )
+    DBLP_CACHE_TTL_HOURS = float(os.environ.get('DBLP_CACHE_TTL_HOURS', '24'))
+    DBLP_STALE_CACHE_DAYS = float(os.environ.get('DBLP_STALE_CACHE_DAYS', '30'))
     # 作者单位补全：OpenAlex API Key 免费，但从 2026 年起为必填。
     OPENALEX_API_KEY = _get_system_environment('PAPERINFO_OPENALEX_API_KEY')
     OPENALEX_DELAY = float(os.environ.get('OPENALEX_DELAY', '0.5'))
     OPENALEX_REQUEST_TIMEOUT = int(os.environ.get('OPENALEX_REQUEST_TIMEOUT', '20'))
     OPENALEX_MAX_RETRIES = int(os.environ.get('OPENALEX_MAX_RETRIES', '2'))
+    # Unpaywall only requires a contact email and returns legal OA locations.
+    UNPAYWALL_EMAIL = _get_system_environment('PAPERINFO_UNPAYWALL_EMAIL')
+    UNPAYWALL_DELAY = float(os.environ.get('UNPAYWALL_DELAY', '0.5'))
+    UNPAYWALL_REQUEST_TIMEOUT = int(os.environ.get('UNPAYWALL_REQUEST_TIMEOUT', '20'))
+    UNPAYWALL_MAX_RETRIES = int(os.environ.get('UNPAYWALL_MAX_RETRIES', '2'))
+    CROSSREF_MAILTO = _get_system_environment('PAPERINFO_CROSSREF_MAILTO')
+    CROSSREF_DELAY = float(os.environ.get('CROSSREF_DELAY', '0.25'))
+    CROSSREF_REQUEST_TIMEOUT = int(os.environ.get('CROSSREF_REQUEST_TIMEOUT', '20'))
+    CROSSREF_MAX_RETRIES = int(os.environ.get('CROSSREF_MAX_RETRIES', '2'))
+    METADATA_PAGE_DELAY = float(os.environ.get('METADATA_PAGE_DELAY', '1.0'))
+    METADATA_PDF_PROBE_TIMEOUT = int(os.environ.get('METADATA_PDF_PROBE_TIMEOUT', '20'))
+    METADATA_RETRY_HOURS = tuple(
+        int(value.strip())
+        for value in os.environ.get('METADATA_RETRY_HOURS', '24,72,168,720').split(',')
+        if value.strip()
+    )
+    METADATA_RETRY_BATCH_SIZE = int(os.environ.get('METADATA_RETRY_BATCH_SIZE', '100'))
     # Zotero 桌面端本地 Connector API；无需云端账号或 API Key。
     ZOTERO_LOCAL_URL = os.environ.get('ZOTERO_LOCAL_URL', 'http://127.0.0.1:23119')
     ZOTERO_LOCAL_TIMEOUT = int(os.environ.get('ZOTERO_LOCAL_TIMEOUT', '15'))

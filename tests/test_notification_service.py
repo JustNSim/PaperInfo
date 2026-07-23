@@ -72,6 +72,31 @@ class NotificationServiceTests(unittest.TestCase):
         self.assertLessEqual(len(summary), 100)
         self.assertTrue(summary.endswith('…'))
 
+    @patch('notification_service._recent_new_papers', return_value=[])
+    def test_partial_update_card_reports_source_failure(self, _recent_papers):
+        update_log = make_update_log(
+            status='partial',
+            operation_details={
+                'started_at': datetime(2026, 7, 21, 2, 0, 0).isoformat(),
+                'duration_seconds': 30,
+                'source_failures': {
+                    'dblp': 'all DBLP endpoints failed',
+                },
+            },
+        )
+
+        card = build_update_card(update_log)
+        contents = '\n'.join(
+            element['text']['content']
+            for element in card['elements']
+            if element.get('tag') == 'div'
+        )
+
+        self.assertEqual('PaperInfo 部分成功', card['header']['title']['content'])
+        self.assertEqual('orange', card['header']['template'])
+        self.assertIn('来源异常', contents)
+        self.assertIn('dblp', contents)
+
     def test_recent_papers_use_started_at_end_time_and_domain(self):
         app = Flask(__name__)
         app.config.update(
