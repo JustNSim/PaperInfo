@@ -158,10 +158,10 @@ def _init_default_domains():
             db.session.add(domain)
         try:
             db.session.commit()
-            print(f"首次安装：已创建 {len(Config.DEFAULT_DOMAINS)} 个默认领域")
+            logger.info("首次安装：已创建 %s 个默认领域", len(Config.DEFAULT_DOMAINS))
         except Exception as e:
             db.session.rollback()
-            print(f"初始化默认领域时出错: {e}")
+            logger.exception("初始化默认领域时出错: %s", e)
 
 
 def _query_papers_by_filters(filters: dict):
