@@ -1,0 +1,11 @@
+cff-version: 1.2.0
+message: "If you use PaperInfo in your research workflow, please cite this software."
+title: "PaperInfo: A Local-First Paper Intelligence and Reading Workflow"
+type: software
+authors:
+  - family-names: "JustNSim"
+repository-code: "https://github.com/JustNSim/PaperInfo"
+url: "https://github.com/JustNSim/PaperInfo"
+version: 0.1.0
+date-released: 2026-07-24
+license: MIT

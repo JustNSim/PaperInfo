@@ -1,5 +1,9 @@
 # Python
 __pycache__/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
 *.py[cod]
 *$py.class
 *.so
@@ -49,4 +53,5 @@ Thumbs.db
 data/*.db
 data/*.sqlite
 data/dblp_cache/
+data/.fetch.lock
 logs/*.log

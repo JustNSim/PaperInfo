@@ -1,13 +1,11 @@
-Flask==3.0.0
-Flask-SQLAlchemy==3.1.1
-APScheduler==3.10.4
-requests==2.31.0
-feedparser==6.0.11
-python-dotenv==1.0.0
-openpyxl>=3.1.0
+Flask>=3.0,<4
+Flask-SQLAlchemy>=3.1,<4
+APScheduler>=3.10,<4
+requests>=2.31,<3
+feedparser>=6.0.11,<7
+python-dotenv>=1,<2
+openpyxl>=3.1,<4
 
 # Optional LLM Provider Dependencies
 # Install based on your chosen provider:
-openai>=1.0.0         # DeepSeek fallback and OpenAI-compatible providers
-# anthropic>=0.18.0    # For Anthropic Claude
-# zhipuai>=2.0.0      # For Zhipu AI (GLM)
+openai>=1,<3           # DeepSeek fallback and OpenAI-compatible providers

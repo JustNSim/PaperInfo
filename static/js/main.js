@@ -2,6 +2,32 @@
  * PaperInfo 前端交互脚本
  */
 
+// 为同源修改请求自动附加会话 CSRF Token。
+const paperInfoNativeFetch = window.fetch.bind(window);
+window.fetch = function(input, init = {}) {
+    const requestUrl = new URL(
+        input instanceof Request ? input.url : String(input),
+        window.location.href
+    );
+    const requestMethod = String(
+        init.method || (input instanceof Request ? input.method : 'GET')
+    ).toUpperCase();
+    if (
+        requestUrl.origin === window.location.origin
+        && ['POST', 'PUT', 'PATCH', 'DELETE'].includes(requestMethod)
+    ) {
+        const headers = new Headers(
+            init.headers || (input instanceof Request ? input.headers : undefined)
+        );
+        const token = document.querySelector('meta[name="csrf-token"]')?.content;
+        if (token) {
+            headers.set('X-CSRF-Token', token);
+        }
+        init = {...init, headers};
+    }
+    return paperInfoNativeFetch(input, init);
+};
+
 $(document).ready(function() {
     // 初始化工具提示
     $('[data-bs-toggle="tooltip"]').tooltip();

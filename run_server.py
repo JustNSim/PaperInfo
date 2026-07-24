@@ -28,7 +28,15 @@ if sys.stdout is None or sys.stderr is None:
 
 os.chdir(BASE_DIR)
 
-import app  # noqa: E402  # 导入即完成数据库初始化与调度器启动
+import app  # noqa: E402
+
+# app 模块被导入时不会启动后台线程；后台入口显式启动调度器。
+app.setup_scheduler(app.app)
 
 if __name__ == '__main__':
-    app.app.run(host='0.0.0.0', port=5000, debug=False, use_reloader=False)
+    app.app.run(
+        host=app.app.config['HOST'],
+        port=app.app.config['PORT'],
+        debug=False,
+        use_reloader=False,
+    )
