@@ -2,6 +2,7 @@
 PaperInfo 全局配置文件
 """
 import os
+import secrets
 from dotenv import load_dotenv
 
 # 加载 .env 文件中的环境变量
@@ -45,7 +46,12 @@ class Config:
     """应用配置类"""
 
     # Flask 基础配置
-    SECRET_KEY = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
+    _CONFIGURED_SECRET_KEY = os.environ.get('SECRET_KEY')
+    SECRET_KEY = _CONFIGURED_SECRET_KEY or secrets.token_hex(32)
+    SECRET_KEY_IS_EPHEMERAL = not bool(_CONFIGURED_SECRET_KEY)
+    HOST = os.environ.get('PAPERINFO_HOST', '127.0.0.1')
+    PORT = int(os.environ.get('PAPERINFO_PORT', '5000'))
+    DEBUG = os.environ.get('FLASK_DEBUG', '0').lower() in ('1', 'true', 'yes')
     BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 
     # 数据库配置
@@ -308,7 +314,7 @@ class Config:
 
 class DevelopmentConfig(Config):
     """开发环境配置"""
-    DEBUG = True
+    DEBUG = Config.DEBUG
     TESTING = False
 
 
@@ -316,13 +322,20 @@ class ProductionConfig(Config):
     """生产环境配置"""
     DEBUG = False
     TESTING = False
-    # 生产环境应从环境变量读取密钥
-    SECRET_KEY = os.environ.get('SECRET_KEY')
+
+
+class TestingConfig(Config):
+    """隔离数据库和后台任务的自动化测试配置。"""
+    TESTING = True
+    DEBUG = False
+    SQLALCHEMY_DATABASE_URI = 'sqlite:///:memory:'
+    LLM_FILTER_ENABLED = False
 
 
 # 配置字典
 config = {
     'development': DevelopmentConfig,
     'production': ProductionConfig,
+    'testing': TestingConfig,
     'default': DevelopmentConfig
 }

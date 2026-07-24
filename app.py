@@ -4,14 +4,26 @@ PaperInfo - 论文调研工具
 """
 import os
 import io
+import hmac
 import json
 import queue
+import secrets
 import threading
 import logging
 import tempfile
 from datetime import datetime, timedelta
 from urllib.parse import urlencode
-from flask import Flask, render_template, request, jsonify, Response, stream_with_context, send_file
+from flask import (
+    Flask,
+    Response,
+    abort,
+    jsonify,
+    render_template,
+    request,
+    send_file,
+    session,
+    stream_with_context,
+)
 from sqlalchemy.exc import IntegrityError
 
 from config import Config, config
@@ -55,11 +67,30 @@ def domain_color(domain_id):
         return DOMAIN_COLORS[-1]
     return DOMAIN_COLORS[(domain_id - 1) % len(DOMAIN_COLORS)]
 
+def _csrf_token():
+    """Return a per-session token used by same-origin mutation requests."""
+    token = session.get('_csrf_token')
+    if not token:
+        token = secrets.token_urlsafe(32)
+        session['_csrf_token'] = token
+    return token
+
+
 # 创建 Flask 应用
-def create_app(config_name='default'):
+def create_app(config_name='default', start_scheduler=False):
     app = Flask(__name__)
     app.config.from_object(config[config_name])
     app.extensions['translation_service'] = TranslationService.from_config(app.config)
+
+    if app.config.get('SECRET_KEY_IS_EPHEMERAL'):
+        logger.warning(
+            'SECRET_KEY 未配置，本次进程使用临时随机密钥；重启后浏览器会话将失效'
+        )
+    if app.config.get('HOST') not in ('127.0.0.1', 'localhost', '::1'):
+        logger.warning(
+            'PaperInfo 正在监听非回环地址。当前版本定位为单用户本地工具，'
+            '请勿直接暴露到公网'
+        )
 
     # 确保必要的目录存在
     os.makedirs(app.config['BASE_DIR'] + '/data', exist_ok=True)
@@ -77,14 +108,35 @@ def create_app(config_name='default'):
 
     init_affiliation_service(app)
 
-    # 设置定时任务
-    setup_scheduler(app)
+    # 设置定时任务；测试或 WSGI 导入时可显式关闭，避免后台线程副作用。
+    if start_scheduler:
+        setup_scheduler(app)
 
     # 注册路由
     register_routes(app)
 
     # 领域配色函数注入模板（index/history 等页面的领域徽章使用）
     app.jinja_env.globals['domain_color'] = domain_color
+    app.jinja_env.globals['csrf_token'] = _csrf_token
+
+    @app.before_request
+    def enforce_csrf_for_mutations():
+        if request.method not in {'POST', 'PUT', 'PATCH', 'DELETE'}:
+            return None
+        expected = session.get('_csrf_token')
+        provided = request.headers.get('X-CSRF-Token', '')
+        if (
+            not expected
+            or not provided
+            or not hmac.compare_digest(str(expected), str(provided))
+        ):
+            if request.path.startswith('/api/'):
+                return jsonify({
+                    'success': False,
+                    'message': 'CSRF 校验失败，请刷新页面后重试',
+                }), 400
+            abort(400)
+        return None
 
     return app
 
@@ -217,6 +269,11 @@ def register_routes(app):
     def stats():
         """统计页面"""
         return render_template('stats.html')
+
+    @app.route('/api/csrf-token')
+    def api_csrf_token():
+        """API clients can establish a session and obtain a mutation token."""
+        return jsonify({'csrf_token': _csrf_token()})
 
     @app.route('/history')
     def history():
@@ -1053,7 +1110,7 @@ def register_routes(app):
                                 relevance_threshold = getattr(Config, 'LLM_RELEVANCE_THRESHOLD', Config.LLM_FILTER_THRESHOLD)
                                 value_threshold = getattr(Config, 'LLM_VALUE_THRESHOLD', Config.LLM_FILTER_THRESHOLD)
                                 logger.debug(f"论文被过滤: {result.get('title_short')} (相关度: {result.get('relevance')} < {relevance_threshold} 或 价值: {result.get('value')} < {value_threshold})")
-                                data = f"data: {json.dumps({
+                                payload = {
                                     'type': 'progress',
                                     'current': total_completed,
                                     'total': total,
@@ -1063,10 +1120,11 @@ def register_routes(app):
                                     'filtered': True,
                                     'relevance': result.get('relevance'),
                                     'value': result.get('value')
-                                })}\n\n"
+                                }
+                                data = f"data: {json.dumps(payload)}\n\n"
                             elif not result.get('success'):
                                 failed_count += 1
-                                data = f"data: {json.dumps({
+                                payload = {
                                     'type': 'progress',
                                     'current': total_completed,
                                     'total': total,
@@ -1074,10 +1132,11 @@ def register_routes(app):
                                     'paper_id': result.get('paper_id'),
                                     'title': result.get('title_short'),
                                     'error': result.get('error')
-                                })}\n\n"
+                                }
+                                data = f"data: {json.dumps(payload)}\n\n"
                             else:
                                 success_count += 1
-                                data = f"data: {json.dumps({
+                                payload = {
                                     'type': 'progress',
                                     'current': total_completed,
                                     'total': total,
@@ -1088,7 +1147,8 @@ def register_routes(app):
                                     'value': result.get('value'),
                                     'old_relevance': result.get('old_relevance'),
                                     'old_value': result.get('old_value')
-                                })}\n\n"
+                                }
+                                data = f"data: {json.dumps(payload)}\n\n"
 
                             yield data
 
@@ -1129,7 +1189,7 @@ def register_routes(app):
                 # 只返回前20条分数变化示例
                 changes_sample = score_changes[:20] if score_changes else []
 
-                data = f"data: {json.dumps({
+                payload = {
                     'type': 'complete',
                     'total': total,
                     'success': success_count,
@@ -1137,7 +1197,8 @@ def register_routes(app):
                     'filtered': filtered_count,
                     'score_changes_count': len(score_changes),
                     'score_changes_sample': changes_sample
-                })}\n\n"
+                }
+                data = f"data: {json.dumps(payload)}\n\n"
                 yield data
 
             except Exception as e:
@@ -1642,10 +1703,14 @@ def register_routes(app):
         return render_template('base.html', content='<h1>服务器错误</h1>'), 500
 
 
-# 创建应用实例
-app = create_app()
+# 创建应用实例。仅直接执行 app.py 时启动调度器；导入模块不会创建后台线程。
+app = create_app(start_scheduler=__name__ == '__main__')
 
 if __name__ == '__main__':
-    # 后台常驻（任务计划/服务）时设 FLASK_DEBUG=0，避免 reloader 派生子进程导致进程管理混乱
-    debug = os.environ.get('FLASK_DEBUG', '1').lower() in ('1', 'true', 'yes')
-    app.run(host='0.0.0.0', port=5000, debug=debug, use_reloader=debug)
+    debug = bool(app.config.get('DEBUG'))
+    app.run(
+        host=app.config['HOST'],
+        port=app.config['PORT'],
+        debug=debug,
+        use_reloader=debug,
+    )

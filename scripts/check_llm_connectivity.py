@@ -1,4 +1,4 @@
-"""安全地测试 GLM、DeepSeek 以及自动降级链路，不输出 API Key。"""
+"""手动检查 GLM、DeepSeek 以及自动降级链路，不输出 API Key。"""
 import sys
 
 from config import Config

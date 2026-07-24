@@ -14,7 +14,7 @@ python app.py
 # Access web interface at http://localhost:5000
 ```
 
-`FLASK_DEBUG` env var controls debug mode of `python app.py` (default on, reloader enabled). The background entry `run_server.py` ignores it and always runs with `debug=False`/`use_reloader=False`.
+`FLASK_DEBUG` env var controls debug mode of `python app.py` (default off). The app listens on `127.0.0.1:5000` unless `PAPERINFO_HOST`/`PAPERINFO_PORT` are explicitly changed. The background entry `run_server.py` always runs with `debug=False`/`use_reloader=False`.
 
 ## Running as a Background Service (Windows)
 
