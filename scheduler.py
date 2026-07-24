@@ -24,11 +24,15 @@ from models import get_beijing_time
 from notification_service import send_update_notification
 
 # 配置日志
+_BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+_LOG_DIR = os.path.join(_BASE_DIR, 'logs')
+os.makedirs(_LOG_DIR, exist_ok=True)
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('logs/paper_info.log', encoding='utf-8'),
+        logging.FileHandler(os.path.join(_LOG_DIR, 'paper_info.log'), encoding='utf-8'),
         logging.StreamHandler()
     ]
 )
